@@ -1,0 +1,21 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+
+# Python cache y bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Base de datos local de desarrollo
+*.db
+*.sqlite3
+
+# Logs del cliente
+*.log
+
+# Archivos de IDE y sistema
+.vscode/
+.idea/
+.DS_Store
