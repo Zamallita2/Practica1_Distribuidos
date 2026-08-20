@@ -1,6 +1,6 @@
 import os
 import json
-from socket_server import MonitoringServer
+from server.socket_server import MonitoringServer
 
 def main():
     config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
