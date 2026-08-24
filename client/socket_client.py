@@ -75,13 +75,15 @@ class MonitoringClient:
             print(f"[CLIENTE {self.client_id}] Mensaje recibido del servidor: {msg}")
             
             if msg.get("type") == "COMMAND":
-                # Requisito 4: Registrar en .log y responder ACK
+                # Requisito 4 de Tanina: Registrar en .log y responder ACK
                 log_command(msg)
                 cmd_id = msg.get("command_id", "unk")
-                ack = create_ack_response(cmd_id, self.client_id)
+                action = msg.get("action", "Comando ejecutado")
+                ack = create_ack_response(cmd_id, self.client_id, status="OK", message=f"Ejecutado: '{action}'")
                 ack_str = json.dumps(ack) + "\n"
                 self.sock.sendall(ack_str.encode('utf-8'))
-                print(f"[CLIENTE {self.client_id}] ACK enviado para comando {cmd_id}")
+                print(f"✅ [CLIENTE {self.client_id}] Comando '{action}' registrado en .log y ACK enviado al servidor.")
+
         except Exception as e:
             print(f"[CLIENTE {self.client_id}] Error procesando mensaje: {e}")
 

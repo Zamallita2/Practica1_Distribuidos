@@ -1,127 +1,114 @@
 # Storage Cluster - Sistema de Monitoreo Distribuido (Práctica 1)
 
-Este proyecto implementa un **Storage Cluster Lógico Monitoreado** con arquitectura **Cliente-Servidor (TCP Sockets)** para la Caja Nacional de Salud (CNS), que abarca 9 nodos regionales (clientes), un servidor central de monitoreo, persistencia de datos (SQLite/PostgreSQL/MySQL) y un dashboard web de visualización en tiempo real.
+Este repositorio contiene la solución completa para el **Storage Cluster Lógico Monitoreado** de la Caja Nacional de Salud (CNS), que soporta 9 nodos regionales de almacenamiento, un servidor central de monitoreo en tiempo real con Sockets TCP, persistencia en base de datos SQLite y una interfaz web (Dashboard).
 
 ---
 
-## 📁 Estructura del Proyecto y Distribución por Módulos
+## 👥 Roles del Equipo y Asignación de Módulos
 
-```text
-Practica1_Distribuidos/
-├── client/                     # 🟠 Módulo Cliente (Tanina)
-│   ├── main.py                 # Punto de entrada del nodo cliente
-│   ├── disk_metrics.py         # Extracción de métricas de disco (SSD/HDD, IOPS, etc.)
-│   ├── socket_client.py        # Cliente Socket TCP, reconexión y comunicación bidireccional
-│   └── logger.py               # Gestión de logs locales (.log) y envío de ACK
-│
-├── server/                     # 🔵 Módulo Servidor Central (Mateo)
-│   ├── main.py                 # Punto de entrada del servidor central
-│   ├── socket_server.py        # Servidor TCP concurrente (Threads/Async)
-│   ├── cluster_metrics.py      # Cálculo de KPIs globales, latencia y agregación del cluster
-│   ├── client_manager.py       # Detección automática de nodos y control de timeout ("No Reporta")
-│   └── command_handler.py      # Envío de comandos remotos a los clientes
-│
-├── database/                   # 🟢 Módulo Persistencia y Configuración (Kevin)
-│   ├── db_manager.py           # Conexión, inicialización y operaciones CRUD (SQLite/PostgreSQL/etc.)
-│   ├── models.py               # Esquema de base de datos (Clientes, Métricas, Historial, Estados)
-│   └── config.py               # Parametrización global y frecuencia de actualización
-│
-├── dashboard/                  # 🟣 Módulo Dashboard Web y API (Lucas)
-│   ├── app.py                  # API HTTP / Web Server (Flask/FastAPI) para el Dashboard
-│   ├── static/                 # CSS (estilos visuales modernos, dark mode) y JS (Auto-Refresh)
-│   └── templates/              # Interfaz HTML para monitoreo de los 9 servidores y KPIs globales
-│
-├── docs/                       # 📄 Documentación y Microinforme Técnico (Lucas & Equipo)
-│   └── microinforme_tecnico.md # Roles, Cronograma, CutOff, Reglamento y Mandamientos
-│
-├── config.json                 # Archivo de configuración global parametrizable
-├── requirements.txt            # Dependencias de Python necesarias
-└── README.md                   # Instrucciones generales del repositorio
-```
-
----
-
-## 👥 Asignación de Roles y Responsabilidades
-
-| Integrante | Rol / Módulo | Tareas Principales |
+| Integrante | Rol | Módulo Asignado |
 | :--- | :--- | :--- |
-| 🟠 **Tanina** | **Nodo Cliente** | - Extracción de métricas de disco (Multiplataforma: Windows/Linux).<br>- Socket TCP cliente, envío periódico y manejo de desconexiones.<br>- Escucha bidireccional, registro de logs `.log` y respuestas `ACK`. |
-| 🔵 **Mateo** | **Servidor Central** | - Socket TCP Servidor concurrente para soportar hasta 9 nodos.<br>- Recepción, agregación y cálculo de KPIs globales (capacidad, latencia).<br>- Detección automática de nuevos nodos y marcado de estado `"No Reporta"`.<br>- Envío de comandos remotos a nodos específicos. |
-| 🟢 **Kevin** | **Persistencia y Parametrización** | - Diseño e implementación de la Base de Datos (Tablas: Clientes, Métricas, Estados).<br>- Integración Servidor-BD para guardar métricas e historial.<br>- Parametrización de frecuencia de envío (configurable cliente/servidor). |
-| 🟣 **Lucas** | **Dashboard + Gestión** | - Interfaz gráfica web moderna con auto-refresh para monitorear los 9 servidores.<br>- Integración con la API/BD para métricas individuales y globales.<br>- Redacción del Microinforme Técnico (Roles, Cronograma, Reglamento/Mandamientos). |
+| 🟠 **Tanina** | Nodo Cliente Multiplataforma | `client/` |
+| 🔵 **Mateo** | Servidor Central TCP & Lógica Cluster | `server/` |
+| 🟢 **Kevin** | Persistencia & BD | `database/` |
+| 🟣 **Lucas** | Dashboard Web & Documentación | `dashboard/` y `docs/` |
 
 ---
 
-## 🚀 Requisitos Previos e Instalación
-
-### Requisitos
-- **Python 3.8+**
-- `pip` para la gestión de paquetes
-
-### Instalación de dependencias
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## 🛠️ Guía de Ejecución Local
+## 🚀 Guía de Inicio Rápido (Prueba Local)
 
 ### 1. Iniciar el Servidor Central (Mateo)
 ```bash
 python server/main.py
 ```
 
-### 2. Iniciar el Dashboard Web (Lucas)
+### 2. Iniciar Nodos Clientes Simulados (Tanina / Pruebas)
+En terminales separadas:
+```bash
+python client/main.py --id REGIONAL_LA_PAZ --interval 3
+python client/main.py --id REGIONAL_SANTA_CRUZ --interval 5
+```
+
+### 3. Iniciar el Dashboard Web (Lucas)
 ```bash
 python dashboard/app.py
 ```
-Acceder en el navegador a `http://localhost:5000` (o el puerto configurado).
-
-### 3. Iniciar un Nodo Cliente (Tanina)
-```bash
-python client/main.py --id REGIONAL_01
-```
+Acceder en el navegador a: `http://localhost:5000`
 
 ---
 
-## 📌 Protocolo de Mensajes Socket (JSON)
+## 📘 Guía de Integración para Kevin (🟢 Persistencia & BD)
 
-Para asegurar interoperabilidad entre los desarrolladores, los mensajes TCP se enviarán como cadenas **JSON delimitas por salto de línea (`\n`)**:
+### ¿De dónde y cómo consultar / guardar los datos?
+Toda la lógica de persistencia está centralizada en `database/db_manager.py`.
 
-### Reporte de Métricas (Cliente ➔ Servidor)
-```json
-{
-  "type": "METRICS",
-  "client_id": "REGIONAL_SANTA_CRUZ",
-  "timestamp": "2026-08-20T03:30:00Z",
-  "disk": {
-    "name": "/dev/sda1",
-    "type": "SSD",
-    "total_gb": 500.0,
-    "used_gb": 220.5,
-    "free_gb": 279.5,
-    "iops": 1500
+1. **Ubicación de la Base de Datos:**
+   - Archivo SQLite: `cluster_monitoring.db` en la raíz del proyecto.
+2. **Tablas Creadas:**
+   - `clients`: Almacena `client_id`, `status` (`Activo` / `No Reporta`), `first_connected`, `last_seen`.
+   - `metrics`: Historial de métricas con `client_id`, `disk_name`, `disk_type`, `total_gb`, `used_gb`, `free_gb`, `iops`, `timestamp`.
+   - `config`: Almacena la parametrización de frecuencia y configuración.
+3. **Funciones Clave para Kevin:**
+   - `save_metric(client_id, disk_data, timestamp)`: Invocada automáticamente por el servidor al recibir un paquete de métricas.
+   - `get_latest_metrics_all_clients()`: Retorna el último estado de los 9 servidores para reportes o consultas avanzadas de BD.
+
+---
+
+## 🟣 Guía de Integración para Lucas (Dashboard Web & API)
+
+### 1. ¿Cómo obtener los datos en tiempo real de la RAM?
+Para lograr un Dashboard fluido y de rápida respuesta, **Lucas debe consumir los datos directamente desde la memoria RAM del Servidor Central o a través de los helpers**:
+
+- **Métricas de Nodos en RAM:**
+  Consumir `server.get_active_clients_in_memory()` o llamar a la función helper:
+  ```python
+  from server.cluster_metrics import calculate_cluster_metrics_from_ram
+  # Pasa el diccionario de la RAM para obtener KPIs consolidados al instante:
+  kpis = calculate_cluster_metrics_from_ram(server.clients)
+  ```
+- **Datos expuestos en la API REST (`dashboard/app.py`):**
+  Actualmente, el endpoint `/api/dashboard` retorna un JSON listo con la lista de servidores y KPIs globales:
+  ```json
+  {
+    "cluster": {
+      "total_cluster_gb": 466.36,
+      "used_cluster_gb": 396.34,
+      "free_cluster_gb": 46.2,
+      "pct_utilization": 84.99,
+      "avg_latency_ms": 312.4,
+      "active_nodes": 2
+    },
+    "servers": [ ... ]
   }
-}
-```
+  ```
 
-### Comando Remoto (Servidor ➔ Cliente)
-```json
-{
-  "type": "COMMAND",
-  "command_id": "cmd-101",
-  "action": "Verifique espacio en disco"
-}
-```
+### 2. ¿Cómo enviar Comandos Remotos desde el Dashboard?
+Mateo ha preparado e integrado métodos directos en la clase `MonitoringServer` para que Lucas pueda enviar comandos mediante botones en el Dashboard:
 
-### Respuesta ACK (Cliente ➔ Servidor)
-```json
-{
-  "type": "ACK",
-  "command_id": "cmd-101",
-  "client_id": "REGIONAL_SANTA_CRUZ",
-  "status": "OK",
-  "message": "Comando recibido y ejecutado correctamente"
-}
-```
+- **Enviar comando a un cliente específico:**
+  ```python
+  # Retorna (True/False, "Mensaje de estado")
+  ok, msg = server_instance.send_command_to_client("REGIONAL_LA_PAZ", "Reinicie servicio")
+  ```
+- **Enviar comando masivo a todos los nodos activos (Broadcast):**
+  ```python
+  # Retorna (cantidad_enviados, "Mensaje de estado")
+  count, msg = server_instance.broadcast_command_to_all("Verifique espacio en disco")
+  ```
+- **Comandos Soportados por Estándar:**
+  - `"Reinicie servicio"`
+  - `"Verifique espacio en disco"`
+  - `"Actualización de configuración"`
+
+---
+
+## 📡 Especificación del Protocolo TCP (JSON)
+
+Toda comunicación a través de los Sockets TCP se realiza con objetos JSON terminados en `\n`:
+
+- **Métricas (Cliente ➔ Servidor):**
+  `{"type": "METRICS", "client_id": "REGIONAL_01", "timestamp": "...", "disk": {...}}`
+- **Comando Remoto (Servidor ➔ Cliente):**
+  `{"type": "COMMAND", "command_id": "cmd-123", "action": "Reinicie servicio"}`
+- **Confirmación ACK (Cliente ➔ Servidor):**
+  `{"type": "ACK", "command_id": "cmd-123", "client_id": "REGIONAL_01", "status": "OK", "message": "Ejecutado: 'Reinicie servicio'"}`
