@@ -21,30 +21,8 @@ let globalPieChart = new Chart(ctx, {
 async function fetchDashboardData() {
     try {
         // NOTA PARA EL EQUIPO: Descomentar esto cuando la API esté lista
-        // const res = await fetch('/api/dashboard');
-        // const data = await res.json();
-        
-        // Mock de datos estructurados para pre-visualizar el diseño actual
-        const data = {
-            cluster: {
-                total_str: "74 TB", 
-                used_str: "61 GB", 
-                free_str: "13 GB",
-                active_nodes: 7, 
-                utilization_pct: 78
-            },
-            servers: [
-                { id: "Oruro", total: "400 GB", used: "24 GB Uso", free: "376 GB Libre", pct: 15, status: "Activo" },
-                { id: "La Paz", total: "800 GB", used: "24 GB Uso", free: "376 GB Libre", pct: 40, status: "Activo" },
-                { id: "Santa Cruz", total: "", used: "", free: "", pct: 0, status: "No reporta" },
-                { id: "Beni", total: "125 GB", used: "24 GB Uso", free: "376 GB Libre", pct: 60, status: "Activo" },
-                { id: "Tarija", total: "1.8 TB", used: "24 GB Uso", free: "376 GB Libre", pct: 90, status: "Activo" },
-                { id: "Pando", total: "400 GB", used: "24 GB Uso", free: "376 GB Libre", pct: 10, status: "Activo" },
-                { id: "Cochabamba", total: "", used: "", free: "", pct: 0, status: "No reporta" },
-                { id: "Chuquisaca", total: "400 GB", used: "24 GB Uso", free: "376 GB Libre", pct: 65, status: "Activo" },
-                { id: "Potosí", total: "800 GB", used: "24 GB Uso", free: "671 GB Libre", pct: 35, status: "Activo" }
-            ]
-        };
+        const res = await fetch('/api/dashboard');
+        const data = await res.json();
 
         // 3. Actualizar la información del Header
         document.getElementById('hdr-total').innerText = data.cluster.total_str;
