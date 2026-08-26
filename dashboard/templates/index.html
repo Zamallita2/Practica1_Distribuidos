@@ -12,8 +12,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <!-- Hoja de estilos externa -->
-    <!-- Nota: Si usas Flask, la ruta ideal sería {{ url_for('static', filename='css/styles.css') }} -->
-    <link rel="stylesheet" href="../static/css/styles.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
 
@@ -48,7 +47,6 @@
     </div>
 
     <!-- Script de Lógica del Dashboard -->
-    <!-- Nota: Si usas Flask, la ruta ideal sería {{ url_for('static', filename='js/monitor.js') }} -->
-    <script src="../static/js/monitor.js"></script>
+    <script src="{{ url_for('static', filename='js/monitor.js') }}"></script>
 </body>
 </html>

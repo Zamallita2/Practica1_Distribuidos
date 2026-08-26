@@ -40,14 +40,34 @@ async function fetchDashboardData() {
         container.innerHTML = ''; // Limpiar grid anterior
 
         data.servers.forEach(srv => {
-            const isInactive = srv.status === 'No reporta';
+            const isInactive = srv.status.toLowerCase().includes('no reporta');
             
-            // Lógica semántica de colores para la barra
-            let barColorClass = 'fill-empty';
-            if (!isInactive) {
-                if (srv.pct < 50) barColorClass = 'fill-green';
-                else if (srv.pct < 80) barColorClass = 'fill-orange';
-                else barColorClass = 'fill-red';
+            // Generar bloque de métricas y barras de progreso por cada disco
+            let disksHtml = '';
+            
+            if (isInactive) {
+                disksHtml = `<div class="status-text">No reporta</div>
+                             <div class="progress-bar">
+                                 <div class="progress-fill fill-empty" style="width: 0%;"></div>
+                             </div>`;
+            } else {
+                const diskList = srv.disks || [];
+                diskList.forEach(d => {
+                    let barColorClass = 'fill-green';
+                    if (d.pct >= 80) barColorClass = 'fill-red';
+                    else if (d.pct >= 50) barColorClass = 'fill-orange';
+
+                    disksHtml += `
+                        <div class="disk-item" style="margin-bottom: 8px; width: 100%;">
+                            <div class="metrics-text" style="margin-bottom: 4px; font-size: 0.75rem;">
+                                <strong>${d.name} (${d.type})</strong>: ${d.used} / ${d.total} (${d.pct}%)
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill ${barColorClass}" style="width: ${d.pct}%;"></div>
+                            </div>
+                        </div>
+                    `;
+                });
             }
 
             // Construcción del HTML de la tarjeta
@@ -62,23 +82,17 @@ async function fetchDashboardData() {
                     </svg>
                     
                     <div class="server-title">${srv.id}</div>
-                    
-                    ${isInactive 
-                        ? `<div class="status-text">No reporta</div>` 
-                        : `<div class="metrics-text">
-                              ${srv.total}<br>
-                              ${srv.used}<br>
-                              ${srv.free}
-                           </div>`
-                    }
-
-                    <div class="progress-bar">
-                        <div class="progress-fill ${barColorClass}" style="width: ${isInactive ? 0 : srv.pct}%;"></div>
+                    <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 8px;">
+                        Total Nodo: ${srv.used} / ${srv.total} (${srv.iops} IOPS)
                     </div>
+                    
+                    ${disksHtml}
                 </div>
             `;
+
             container.innerHTML += card;
         });
+
     } catch (err) {
         console.error("Error obteniendo métricas del cluster:", err);
     }

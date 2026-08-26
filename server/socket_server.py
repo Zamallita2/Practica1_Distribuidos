@@ -206,28 +206,27 @@ class MonitoringServer:
                 print("------------------------------------------------------------------------------------------")
                 
                 if total_registrados == 0:
-                    print(" 💤 Esperando conexiones de nodos clientes...")
+                    print(" 💤 Esperando conexiones de nodos clientes... (Ejecuta: python3 client/main.py --id REGIONAL_LA_PAZ)")
                 else:
-                    print(f"{'CLIENT ID':<20} | {'ESTADO':<11} | {'DISCO':<9} | {'ÚLTIMO REPORTE':<14} | {'ÚLTIMO ACK RECIBIDO'}")
-                    print("------------------------------------------------------------------------------------------")
+                    print(f"{'CLIENT ID':<18} | {'ESTADO':<10} | {'DISCO (TIPO)':<16} | {'USADO / TOTAL':<16} | {'LIBRE':<9} | {'IOPS':<6} | {'REPORTE'}")
+                    print("----------------------------------------------------------------------------------------------------")
                     now = time.time()
                     for cid, data in self.clients.items():
                         status = data.get("status", "Desconocido")
                         status_str = "🟢 Activo" if status == "Activo" else "🔴 No Reporta"
                         disk = data.get("metrics", {})
                         hace_seg = round(now - data.get("last_seen", now), 1)
-                        disk_name = disk.get('name', 'N/A')
-                        if len(disk_name) > 9: disk_name = disk_name[:7] + "..."
                         
+                        disk_name = f"{disk.get('name', 'N/A')} ({disk.get('type', 'SSD')})"
+                        if len(disk_name) > 16: disk_name = disk_name[:14] + ".."
+                        
+                        used_total = f"{disk.get('used_gb', 0)}G/{disk.get('total_gb', 0)}G"
+                        free_str = f"{disk.get('free_gb', 0)} GB"
+                        iops_str = str(disk.get('iops', 0))
                         tiempo_str = f"Hace {hace_seg}s" if status == "Activo" else f"Timeout ({hace_seg}s)"
                         
-                        ack_info = data.get("last_ack")
-                        if ack_info:
-                            ack_str = f"[{ack_info['timestamp']}] {ack_info['status']} ({ack_info['command_id']})"
-                        else:
-                            ack_str = "Sin comandos enviados"
-                            
-                        print(f"{cid:<20} | {status_str:<11} | {disk_name:<9} | {tiempo_str:<14} | {ack_str}")
+                        print(f"{cid:<18} | {status_str:<10} | {disk_name:<16} | {used_total:<16} | {free_str:<9} | {iops_str:<6} | {tiempo_str}")
+
             
             print("==========================================================================================")
             print(" 🕹️ MENÚ DE COMANDOS RÁPIDOS EN CONSOLA (Escribe una opción + Enter):")
