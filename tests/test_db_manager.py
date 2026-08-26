@@ -112,7 +112,7 @@ def test_ciclo_mensajes_ack():
     # El cliente debe existir antes de poder enviarle un mensaje (FK constraint)
     db_manager.save_metric("nodo-1", {"name": "sda1"}, ahora())
 
-    msg_id = db_manager.save_message("nodo-1", "Ajustar intervalo a 45s", ahora())
+    msg_id = db_manager.save_message("nodo-1", "cmd-test-1", "Ajustar intervalo a 45s", ahora())
 
     pendientes = db_manager.get_pending_messages("nodo-1")
     assert len(pendientes) == 1

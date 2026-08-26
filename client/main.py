@@ -1,7 +1,12 @@
 import argparse
 import json
 import os
-from socket_client import MonitoringClient
+import sys
+
+# Agregar la ruta raíz al path para importar correctamente
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from client.socket_client import MonitoringClient
 
 def main():
     parser = argparse.ArgumentParser(description="Nodo Cliente de Monitoreo - Practica 1")
