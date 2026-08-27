@@ -2,8 +2,14 @@ import socket
 import json
 import time
 import threading
-from disk_metrics import get_first_disk_metrics
-from logger import log_command, create_ack_response
+import sys
+import os
+
+# Agregar la ruta raíz al path para importar correctamente
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from client.disk_metrics import get_first_disk_metrics
+from client.logger import log_command, create_ack_response
 
 class MonitoringClient:
     def __init__(self, client_id, server_host="127.0.0.1", server_port=9000, send_interval=5):
@@ -13,6 +19,7 @@ class MonitoringClient:
         self.send_interval = send_interval
         self.sock = None
         self.running = False
+        self.interval_lock = threading.Lock()  # Para cambiar el intervalo de forma segura
 
     def connect(self):
         """Conecta el socket TCP al servidor central."""
@@ -34,7 +41,7 @@ class MonitoringClient:
                 time.sleep(5)
 
     def _send_loop(self):
-        """Envía métricas de disco de forma periódica."""
+        """Envía métricas de disco de forma periódica con intervalo dinámico."""
         while self.running:
             try:
                 disk = get_first_disk_metrics()
@@ -47,7 +54,11 @@ class MonitoringClient:
                 data_str = json.dumps(payload) + "\n"
                 self.sock.sendall(data_str.encode('utf-8'))
                 print(f"[CLIENTE {self.client_id}] Métricas enviadas correctamente.")
-                time.sleep(self.send_interval)
+                
+                # Usar el intervalo actual (puede cambiar dinámicamente)
+                with self.interval_lock:
+                    current_interval = self.send_interval
+                time.sleep(current_interval)
             except Exception as e:
                 print(f"[CLIENTE {self.client_id}] Error enviando métricas: {e}")
                 break
@@ -75,10 +86,24 @@ class MonitoringClient:
             print(f"[CLIENTE {self.client_id}] Mensaje recibido del servidor: {msg}")
             
             if msg.get("type") == "COMMAND":
+                action = msg.get("action", "")
+                
+                # Verificar si es una actualización de configuración
+                if action.startswith("Actualización de configuración"):
+                    # Extraer el nuevo intervalo
+                    parts = action.split("|")
+                    if len(parts) > 1:
+                        try:
+                            new_interval = int(parts[1])
+                            with self.interval_lock:
+                                self.send_interval = new_interval
+                            print(f"⚙️ [CLIENTE {self.client_id}] Intervalo de envío actualizado a {new_interval} segundos.")
+                        except ValueError:
+                            print(f"⚠️ [CLIENTE {self.client_id}] No se pudo procesar el nuevo intervalo.")
+                
                 # Requisito 4 de Tanina: Registrar en .log y responder ACK
                 log_command(msg)
                 cmd_id = msg.get("command_id", "unk")
-                action = msg.get("action", "Comando ejecutado")
                 ack = create_ack_response(cmd_id, self.client_id, status="OK", message=f"Ejecutado: '{action}'")
                 ack_str = json.dumps(ack) + "\n"
                 self.sock.sendall(ack_str.encode('utf-8'))

@@ -41,3 +41,13 @@ def calculate_cluster_metrics_from_ram(clients_ram_dict):
         "active_nodes": active_nodes,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     }
+
+
+def calculate_cluster_metrics():
+    """
+    Función puente para el dashboard.
+    Calcula métricas del cluster usando los datos de la base de datos (persistencia).
+    Esta función es llamada por dashboard/app.py para obtener KPIs globales.
+    """
+    from database.db_manager import get_cluster_summary
+    return get_cluster_summary()

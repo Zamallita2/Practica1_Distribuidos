@@ -76,6 +76,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             client_id TEXT NOT NULL,
+            command_id TEXT,
             message TEXT NOT NULL,
             sent_at TEXT NOT NULL,
             acknowledged INTEGER DEFAULT 0,
@@ -86,6 +87,7 @@ def init_db():
         # Índices para las consultas más frecuentes del dashboard
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_client_ts ON metrics(client_id, timestamp)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_client_ack ON messages(client_id, acknowledged)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_command_id ON messages(command_id)")
 
         cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('REPORT_INTERVAL', '30')")
         cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('TIMEOUT', '60')")
@@ -163,20 +165,29 @@ def set_config(key, value):
         )
 
 
-def save_message(client_id, message, sent_at):
-    """Guarda un mensaje enviado a un cliente."""
+def save_message(client_id, command_id, message, sent_at):
+    """Guarda un mensaje enviado a un cliente con su command_id."""
     with _write_lock, _tx() as conn:
         cursor = conn.execute(
-            "INSERT INTO messages (client_id, message, sent_at, acknowledged) VALUES (?, ?, ?, 0)",
-            (client_id, message, sent_at)
+            "INSERT INTO messages (client_id, command_id, message, sent_at, acknowledged) VALUES (?, ?, ?, ?, 0)",
+            (client_id, command_id, message, sent_at)
         )
         return cursor.lastrowid
 
 
 def mark_message_acknowledged(message_id):
-    """Marca un mensaje como confirmado por el cliente."""
+    """Marca un mensaje como confirmado por el cliente usando su ID numérico."""
     with _write_lock, _tx() as conn:
         conn.execute("UPDATE messages SET acknowledged = 1 WHERE id = ?", (message_id,))
+
+
+def get_message_id_by_command_id(command_id):
+    """Obtiene el id de un mensaje a partir de su command_id (fallback)."""
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT id FROM messages WHERE command_id = ?", (command_id,)
+        ).fetchone()
+        return row["id"] if row else None
 
 
 def get_pending_messages(client_id):
