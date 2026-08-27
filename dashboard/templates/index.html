@@ -3,66 +3,179 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CNS - Dashboard de Monitoreo de Storage Cluster</title>
+    <title>CNS Storage Cluster - Dashboard de Monitoreo Centralizado</title>
     
-    <!-- Fuentes de Google -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- Librería Chart.js para el gráfico circular -->
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Chart.js para gráficas avanzadas -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
-    <!-- Hoja de estilos externa -->
+
+    <!-- CSS del Dashboard -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
 
-    <!-- Header / Resumen Global -->
-    <header>
-        <div class="header-left">
-            <div class="logo-cns">C<br>NS</div>
-            <div class="header-info">
-                <h1>Monitor nacional de almacenamiento</h1>
-                <p>
-                    <strong>Total:</strong> <span id="hdr-total">0 TB</span> &nbsp;-&nbsp; 
-                    <strong>Usado:</strong> <span id="hdr-used">0 GB</span> &nbsp;-&nbsp; 
-                    <strong>Libre:</strong> <span id="hdr-free">0 GB</span>
-                </p>
-                <p>Reportaron <span id="hdr-reporting">0 de 9</span></p>
+    <!-- Header Glassmorphism -->
+    <header class="app-header">
+        <div class="brand">
+            <div class="brand-logo">
+                <i class="fa-solid fa-hospital"></i>
+            </div>
+            <div class="brand-text">
+                <h1>Caja Nacional de Salud</h1>
+                <span>Cluster de Almacenamiento Monitoreado (Sockets TCP)</span>
             </div>
         </div>
-        <div class="header-right">
-            <div>
-                18 Discos<br>
-                <span id="hdr-pct" style="font-weight: 400;">0 %</span>
+
+        <div class="header-actions">
+            <div class="refresh-badge">
+                <i class="fa-solid fa-sync fa-spin"></i> Auto-Refresh: 3s
             </div>
-            <div class="chart-container">
-                <canvas id="globalChart"></canvas>
-            </div>
+            <button class="btn btn-primary" onclick="openCrudModal()">
+                <i class="fa-solid fa-plus-node"></i> Gestión Nodos (CRUD)
+            </button>
         </div>
     </header>
 
-    <!-- Contenedor del Grid para los Servidores -->
-    <div class="servers-grid" id="servers-container">
-        <!-- Las tarjetas de los servidores se inyectarán aquí dinámicamente vía JS -->
+    <!-- KPI Summary Grid -->
+    <section class="kpi-section">
+        <div class="kpi-card">
+            <div class="kpi-icon blue"><i class="fa-solid fa-database"></i></div>
+            <div class="kpi-data">
+                <span class="kpi-label">Capacidad Total</span>
+                <span class="kpi-value" id="kpi-total">0 GB</span>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-icon orange"><i class="fa-solid fa-hard-drive"></i></div>
+            <div class="kpi-data">
+                <span class="kpi-label">Espacio Utilizado</span>
+                <span class="kpi-value" id="kpi-used">0 GB</span>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-icon green"><i class="fa-solid fa-folder-minus"></i></div>
+            <div class="kpi-data">
+                <span class="kpi-label">Espacio Libre</span>
+                <span class="kpi-value" id="kpi-free">0 GB</span>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-icon purple"><i class="fa-solid fa-chart-pie"></i></div>
+            <div class="kpi-data">
+                <span class="kpi-label">Utilización Cluster</span>
+                <span class="kpi-value" id="kpi-pct">0 %</span>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-icon cyan"><i class="fa-solid fa-network-wired"></i></div>
+            <div class="kpi-data">
+                <span class="kpi-label">Nodos Activos</span>
+                <span class="kpi-value" id="kpi-nodes">0 / 0</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Content: Charts & Cluster Grid -->
+    <main class="dashboard-main">
+        <!-- Panel Izquierdo: Gráficas en tiempo real -->
+        <section class="charts-panel">
+            <div class="chart-box">
+                <div class="chart-box-header">
+                    <h3><i class="fa-solid fa-chart-line"></i> Rendimiento IOPS del Cluster (Histórico BD)</h3>
+                </div>
+                <div class="chart-body">
+                    <canvas id="iopsChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-box">
+                <div class="chart-box-header">
+                    <h3><i class="fa-solid fa-chart-pie"></i> Ocupación de Almacenamiento Global</h3>
+                </div>
+                <div class="chart-body pie-body">
+                    <canvas id="globalPieChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Panel Derecho: Grid de Servidores Regionales -->
+        <section class="servers-panel">
+            <div class="panel-header">
+                <h2><i class="fa-solid fa-server"></i> Nodos Autorizados del Cluster</h2>
+                <div class="quick-commands">
+                    <span>Comandos a Todos:</span>
+                    <button class="btn btn-sm btn-secondary" onclick="sendBroadcastCommand('Reinicie servicio')">
+                        <i class="fa-solid fa-rotate-right"></i> Reiniciar
+                    </button>
+                    <button class="btn btn-sm btn-secondary" onclick="sendBroadcastCommand('Verifique espacio en disco')">
+                        <i class="fa-solid fa-magnifying-glass"></i> Espacio
+                    </button>
+                </div>
+            </div>
+
+            <div class="servers-grid" id="servers-container">
+                <!-- Tarjetas inyectadas dinámicamente -->
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal CRUD para Gestión de Servidores -->
+    <div class="modal" id="crud-modal">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-sliders"></i> CRUD - Gestión de Servidores Autorizados</h3>
+                <button class="close-btn" onclick="closeCrudModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="add-node-form" onsubmit="handleAddNode(event)" class="crud-form">
+                    <input type="text" id="new-node-id" placeholder="Nombre de Nodo (ej: REGIONAL_LA_PAZ)" required>
+                    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Agregar Nodo</button>
+                </form>
+
+                <div class="table-responsive">
+                    <table class="crud-table">
+                        <thead>
+                            <tr>
+                                <th>ID Servidor</th>
+                                <th>Estado Actual</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="crud-table-body">
+                            <!-- Filas inyectadas -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- Script de Lógica del Dashboard -->
-    <script>
-        // Flask inyectará el valor de refresh_rate aquí desde el config.json
-        const CONFIG_REFRESH_RATE = parseInt("{{ refresh_rate }}");
-    </script>
-    <script src="{{ url_for('static', filename='js/monitor.js') }}"></script>
-    <!-- Dashboard Individual Oculto -->
-    <div class="modal-overlay" id="server-modal">
-    <div class="modal-content">
-        <div id="modal-metrics">
-            <!-- Las analíticas inyectadas irán aquí -->
-        </div>
-        <div class="modal-charts">
-            <canvas id="individualChart"></canvas>
-            <button onclick="document.getElementById('server-modal').style.display='none'" style="margin-top: 15px; padding: 8px 16px; background: var(--accent-red); border: none; color: white; border-radius: 6px; cursor: pointer;">Cerrar Panel</button>
+    <!-- Modal de Análisis Individual por Servidor -->
+    <div class="modal" id="node-modal">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-header">
+                <h3 id="node-modal-title"><i class="fa-solid fa-server"></i> Análisis de Nodo</h3>
+                <button class="close-btn" onclick="closeNodeModal()">&times;</button>
+            </div>
+            <div class="modal-body modal-grid">
+                <div id="node-modal-info" class="node-info"></div>
+                <div class="node-chart-container">
+                    <canvas id="individualChart"></canvas>
+                </div>
+            </div>
         </div>
     </div>
-</div>
+
+    <!-- JS Principal -->
+    <script src="{{ url_for('static', filename='js/monitor.js') }}"></script>
 </body>
 </html>

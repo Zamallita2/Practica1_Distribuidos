@@ -131,11 +131,18 @@ class MonitoringServer:
                 disk = msg.get("disk", {})
                 timestamp = msg.get("timestamp", datetime.now(UTC).isoformat())
                 
+                # Verificar autorización en el CRUD
+                from database.db_manager import is_client_authorized
+                if not is_client_authorized(client_id):
+                    print(f"⛔ [SERVIDOR CENTRAL] RECHAZADO: El cliente [{client_id}] no existe en el CRUD del Dashboard.")
+                    return current_client_id
+
                 # Guardar métrica en la BD (persistencia)
                 save_metric(client_id, disk, timestamp)
                 
                 with self.lock:
                     existing_ack = self.clients.get(client_id, {}).get("last_ack")
+                    existing_pending = self.clients.get(client_id, {}).get("pending_commands", {})
                     self.clients[client_id] = {
                         "status": "Activo",
                         "socket": sock,
@@ -143,8 +150,11 @@ class MonitoringServer:
                         "last_seen": time.time(),
                         "last_timestamp": timestamp,
                         "metrics": disk,
-                        "last_ack": existing_ack
+                        "last_ack": existing_ack,
+                        "pending_commands": existing_pending
                     }
+
+
 
             elif msg_type == "ACK":
                 cmd_id = msg.get("command_id")
@@ -189,9 +199,17 @@ class MonitoringServer:
     def send_command_to_client(self, client_id, action):
         """Envía un comando bidireccional a un cliente específico."""
         with self.lock:
-            client_info = self.clients.get(client_id)
-            if not client_info or client_info.get("status") != "Activo" or not client_info.get("socket"):
-                return False, f"El cliente [{client_id}] no está activo o conectado."
+            # Buscar el cliente por su ID exacto o por coincidencia case-insensitive
+            target_key = client_id
+            if target_key not in self.clients:
+                for k in self.clients.keys():
+                    if k.lower() == client_id.lower():
+                        target_key = k
+                        break
+
+            client_info = self.clients.get(target_key)
+            if not client_info or not client_info.get("socket"):
+                return False, f"El cliente [{client_id}] no tiene una conexión Socket TCP activa en este momento."
 
             cmd_payload = {
                 "type": "COMMAND",
@@ -203,34 +221,39 @@ class MonitoringServer:
                 client_info["socket"].sendall(cmd_str.encode('utf-8'))
                 
                 # Guardar mensaje en la BD (persistencia) con command_id
-                message_id = save_message(client_id, cmd_payload["command_id"], action, datetime.now(UTC).isoformat())
+                message_id = save_message(target_key, cmd_payload["command_id"], action, datetime.now(UTC).isoformat())
                 
                 # Guardar la relación command_id -> message_id en RAM (para el ACK)
                 if "pending_commands" not in client_info:
                     client_info["pending_commands"] = {}
                 client_info["pending_commands"][cmd_payload["command_id"]] = message_id
                 
-                return True, f"Comando '{action}' transmitido a [{client_id}]."
+                return True, f"Comando '{action}' transmitido exitosamente a [{target_key}]."
             except Exception as e:
                 # Manejar errores de comunicación (desconexión súbita)
                 client_info["status"] = "No Reporta"
                 client_info["socket"] = None
-                update_client_status(client_id, "No Reporta")
-                return False, f"Error enviando comando a [{client_id}]: {e}"
+                update_client_status(target_key, "No Reporta")
+                return False, f"Error enviando comando a [{target_key}]: {e}"
+
 
     def broadcast_command_to_all(self, action):
-        """Envía un comando a TODOS los nodos activos."""
+        """Envía un comando a TODOS los nodos activos o conectados por socket."""
         with self.lock:
-            active_ids = [cid for cid, data in self.clients.items() if data["status"] == "Activo"]
+            active_ids = [
+                cid for cid, data in self.clients.items()
+                if data.get("socket") is not None or str(data.get("status", "")).lower() == "activo"
+            ]
         
         if not active_ids:
-            return 0, "No hay clientes activos conectados."
+            return 0, "No hay clientes activos conectados por Socket TCP en este momento."
         
         sent_count = 0
         for cid in active_ids:
             ok, _ = self.send_command_to_client(cid, action)
             if ok: sent_count += 1
-        return sent_count, f"Comando '{action}' enviado a {sent_count} clientes."
+        return sent_count, f"Comando '{action}' enviado exitosamente a {sent_count} cliente(s)."
+
 
     def _check_client_timeouts(self):
         """Detección automática de inactividad usando la BD."""

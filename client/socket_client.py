@@ -88,26 +88,31 @@ class MonitoringClient:
             if msg.get("type") == "COMMAND":
                 action = msg.get("action", "")
                 
+                print("\n==================================================================")
+                print(f"🔔 [NOTIFICACIÓN DEL SERVIDOR CENTRAL CENTRAL] 🔔")
+                print(f"👉 MENSAJE / ACCIÓN SOLICITADA: '{action}'")
+                print("==================================================================\n")
+
                 # Verificar si es una actualización de configuración
                 if action.startswith("Actualización de configuración"):
-                    # Extraer el nuevo intervalo
                     parts = action.split("|")
                     if len(parts) > 1:
                         try:
                             new_interval = int(parts[1])
                             with self.interval_lock:
                                 self.send_interval = new_interval
-                            print(f"⚙️ [CLIENTE {self.client_id}] Intervalo de envío actualizado a {new_interval} segundos.")
+                            print(f"⚙️ [CLIENTE {self.client_id}] Nuevo intervalo aplicado: {new_interval} segundos.")
                         except ValueError:
-                            print(f"⚠️ [CLIENTE {self.client_id}] No se pudo procesar el nuevo intervalo.")
+                            print(f"⚠️ [CLIENTE {self.client_id}] Error procesando nuevo intervalo.")
                 
-                # Requisito 4 de Tanina: Registrar en .log y responder ACK
+                # Registrar en .log y responder ACK
                 log_command(msg)
                 cmd_id = msg.get("command_id", "unk")
                 ack = create_ack_response(cmd_id, self.client_id, status="OK", message=f"Ejecutado: '{action}'")
                 ack_str = json.dumps(ack) + "\n"
                 self.sock.sendall(ack_str.encode('utf-8'))
-                print(f"✅ [CLIENTE {self.client_id}] Comando '{action}' registrado en .log y ACK enviado al servidor.")
+                print(f"✅ [CLIENTE {self.client_id}] ACK enviado al Servidor Central y guardado en client_commands.log.")
+
 
         except Exception as e:
             print(f"[CLIENTE {self.client_id}] Error procesando mensaje: {e}")

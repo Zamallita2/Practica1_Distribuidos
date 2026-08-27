@@ -1,144 +1,329 @@
-// 1. Inicialización del gráfico circular (Pie Chart) global
-const ctx = document.getElementById('globalChart').getContext('2d');
-let globalPieChart = new Chart(ctx, {
-    type: 'pie',
-    data: {
-        datasets: [{
-            data: [0, 100], // Se inicializa en 0 usado, 100 libre
-            backgroundColor: ['#00ff00', '#d1d5db'],
-            borderWidth: 1,
-            borderColor: '#6b7280'
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { tooltip: { enabled: false }, legend: { display: false } }
-    }
-});
-
-// 2. Función principal para obtener y renderizar datos
-async function fetchDashboardData() {
-    try {
-        // NOTA PARA EL EQUIPO: Descomentar esto cuando la API esté lista
-        const res = await fetch('/api/dashboard');
-        const data = await res.json();
-
-        // 3. Actualizar la información del Header
-        document.getElementById('hdr-total').innerText = data.cluster.total_str;
-        document.getElementById('hdr-used').innerText = data.cluster.used_str;
-        document.getElementById('hdr-free').innerText = data.cluster.free_str;
-        document.getElementById('hdr-reporting').innerText = `${data.cluster.active_nodes} de 9`;
-        document.getElementById('hdr-pct').innerText = `${data.cluster.utilization_pct} %`;
-
-        // 4. Actualizar el Gráfico
-        globalPieChart.data.datasets[0].data = [data.cluster.utilization_pct, 100 - data.cluster.utilization_pct];
-        globalPieChart.update();
-
-        // 5. Renderizado de las 9 tarjetas del clúster
-        const container = document.getElementById('servers-container');
-        container.innerHTML = ''; // Limpiar grid anterior
-
-        data.servers.forEach(srv => {
-            const isInactive = srv.status.toLowerCase().includes('no reporta');
-            
-            // Generar bloque de métricas y barras de progreso por cada disco
-            let disksHtml = '';
-            
-            if (isInactive) {
-                disksHtml = `<div class="status-text">No reporta</div>
-                             <div class="progress-bar">
-                                 <div class="progress-fill fill-empty" style="width: 0%;"></div>
-                             </div>`;
-            } else {
-                const diskList = srv.disks || [];
-                diskList.forEach(d => {
-                    let barColorClass = 'fill-green';
-                    if (d.pct >= 80) barColorClass = 'fill-red';
-                    else if (d.pct >= 50) barColorClass = 'fill-orange';
-
-                    disksHtml += `
-                        <div class="disk-item" style="margin-bottom: 8px; width: 100%;">
-                            <div class="metrics-text" style="margin-bottom: 4px; font-size: 0.75rem;">
-                                <strong>${d.name} (${d.type})</strong>: ${d.used} / ${d.total} (${d.pct}%)
-                            </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill ${barColorClass}" style="width: ${d.pct}%;"></div>
-                            </div>
-                        </div>
-                    `;
-                });
-            }
-
-            // Construcción del HTML de la tarjeta
-            const card = `
-                <div class="server-card ${isInactive ? 'inactive' : ''}">
-                    <!-- SVG Icono Disco Duro -->
-                    <svg class="disk-icon" viewBox="0 0 24 24">
-                        <path d="M4 7C4 5.89543 5.34315 5 7 5H17C18.6569 5 20 5.89543 20 7V17C20 18.1046 18.6569 19 17 19H7C5.34315 19 4 18.1046 4 17V7Z" stroke-width="2"/>
-                        <path d="M4 11H20" stroke-width="2"/>
-                        <circle cx="8" cy="15" r="1" fill="currentColor" stroke="none"/>
-                        <circle cx="12" cy="15" r="1" fill="currentColor" stroke="none"/>
-                    </svg>
-                    
-                    <div class="server-title">${srv.id}</div>
-                    <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 8px;">
-                        Total Nodo: ${srv.used} / ${srv.total} (${srv.iops} IOPS)
-                    </div>
-                    
-                    ${disksHtml}
-                </div>
-            `;
-
-            container.innerHTML += card;
-        });
-
-    } catch (err) {
-        console.error("Error obteniendo métricas del cluster:", err);
-    }
-}
-function updateGlobalPieChart(usedPct) {
-    if (window.globalPieChart) {
-        window.globalPieChart.data.datasets[0].data = [usedPct, 100 - usedPct];
-        window.globalPieChart.update();
-    }
-}
-
-// Añadido: Inyección de analíticas y renderizado del dashboard individual
+// --- 1. Inicialización de Gráficas Chart.js Globales ---
+let iopsChartInstance = null;
+let globalPieChartInstance = null;
 let individualChartInstance = null;
 
-function openServerDashboard(serverData) {
-    document.getElementById('server-modal').style.display = 'flex';
-    
-    // Desplegar datos analíticos precisos del servidor
-    document.getElementById('modal-metrics').innerHTML = `
-        <h2 style="color: #38bdf8; margin-bottom: 12px;">Servidor: ${serverData.client_id || serverData.id}</h2>
-        <p style="margin-bottom: 8px;"><strong>Capacidad Total:</strong> ${serverData.total_gb || 0} GB</p>
-        <p style="margin-bottom: 8px;"><strong>Espacio Libre:</strong> ${serverData.free_gb || 0} GB</p>
-        <p style="margin-bottom: 8px;"><strong>IOPS Registrados:</strong> ${serverData.iops || 'N/A'}</p>
-        <p style="margin-bottom: 8px;"><strong>Tipo de Disco:</strong> ${serverData.disk_type || 'Desconocido'}</p>
-    `;
-
-    // Renderizar gráfico de uso individual
-    const ctx = document.getElementById('individualChart').getContext('2d');
-    if (individualChartInstance) individualChartInstance.destroy();
-    
-    individualChartInstance = new Chart(ctx, {
-        type: 'bar',
+function initCharts() {
+    // Gráfica de Líneas de IOPS (Histórico BD)
+    const ctxIops = document.getElementById('iopsChart').getContext('2d');
+    iopsChartInstance = new Chart(ctxIops, {
+        type: 'line',
         data: {
-            labels: ['Ocupado (GB)', 'Libre (GB)'],
+            labels: [],
             datasets: [{
-                label: 'Distribución de Almacenamiento',
-                data: [serverData.used_gb || 0, serverData.free_gb || 0],
-                backgroundColor: ['#ef4444', '#22c55e']
+                label: 'IOPS Promedio Cluster',
+                data: [],
+                borderColor: '#38bdf8',
+                backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                tension: 0.3,
+                fill: true,
+                pointRadius: 3
             }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#94a3b8', font: { size: 9 } } },
+                y: { ticks: { color: '#94a3b8' } }
+            }
+        }
+    });
+
+    // Gráfica Pie Global de Almacenamiento
+    const ctxPie = document.getElementById('globalPieChart').getContext('2d');
+    globalPieChartInstance = new Chart(ctxPie, {
+        type: 'doughnut',
+        data: {
+            labels: ['Usado (GB)', 'Libre (GB)'],
+            datasets: [{
+                data: [0, 100],
+                backgroundColor: ['#ef4444', '#22c55e'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12 } } }
         }
     });
 }
 
-// 6. Configuración del Auto-Refresh
-// Esto permite consultar al servidor cada 3 segundos (3000 ms)
-setInterval(fetchDashboardData, CONFIG_REFRESH_RATE);
+// --- 2. Función Principal de Carga de Datos (Auto-Refresh) ---
+async function fetchDashboardData() {
+    try {
+        const res = await fetch('/api/dashboard');
+        const data = await res.json();
 
-// Ejecutar la primera carga inmediatamente al abrir
-fetchDashboardData();
+        // 1. Actualizar KPIs del Header
+        document.getElementById('kpi-total').innerText = data.cluster.total_str;
+        document.getElementById('kpi-used').innerText = data.cluster.used_str;
+        document.getElementById('kpi-free').innerText = data.cluster.free_str;
+        document.getElementById('kpi-pct').innerText = `${data.cluster.utilization_pct} %`;
+        document.getElementById('kpi-nodes').innerText = `${data.cluster.active_nodes} / ${data.cluster.total_registered}`;
+
+        // 2. Actualizar Pie Chart
+        const usedNum = parseFloat(data.cluster.used_str) || 0;
+        const freeNum = parseFloat(data.cluster.free_str) || 0;
+        globalPieChartInstance.data.datasets[0].data = [usedNum, freeNum];
+        globalPieChartInstance.update();
+
+        // 3. Actualizar Gráfica de IOPS en el tiempo (desde BD)
+        if (data.iops_history && data.iops_history.length > 0) {
+            const labels = data.iops_history.map(item => {
+                const d = new Date(item.timestamp);
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            });
+            const values = data.iops_history.map(item => Math.round(item.iops));
+
+            iopsChartInstance.data.labels = labels;
+            iopsChartInstance.data.datasets[0].data = values;
+            iopsChartInstance.update();
+        }
+
+        // 4. Renderizar tarjetas de servidores autorizados
+        window.latestServersData = data.servers;
+        renderServerCards(data.servers);
+
+    } catch (err) {
+        console.error("Error cargando dashboard:", err);
+    }
+}
+
+// --- 3. Renderizado de Tarjetas de Servidores ---
+function renderServerCards(servers) {
+    const container = document.getElementById('servers-container');
+    container.innerHTML = '';
+
+    servers.forEach(srv => {
+        const isActive = srv.status === 'Activo';
+        const disks = srv.disks || [];
+
+        let disksBarsHtml = '';
+        if (!isActive || disks.length === 0) {
+            disksBarsHtml = `
+                <div class="disk-bar-container">
+                    <div class="disk-bar-info">
+                        <span>Sin señal / No reporta</span>
+                        <span>0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill fill-empty" style="width: 0%;"></div>
+                    </div>
+                </div>
+            `;
+        } else {
+            disks.forEach(d => {
+                let colorClass = 'fill-green';
+                if (d.pct >= 85) colorClass = 'fill-red';
+                else if (d.pct >= 55) colorClass = 'fill-orange';
+
+                disksBarsHtml += `
+                    <div class="disk-bar-container" style="margin-bottom: 8px;">
+                        <div class="disk-bar-info">
+                            <span><i class="fa-solid fa-hard-drive"></i> ${d.name} (${d.type})</span>
+                            <span>${d.used} / ${d.total} (${d.pct}%)</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill ${colorClass}" style="width: ${d.pct}%;"></div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        const card = `
+            <div class="server-card ${!isActive ? 'inactive' : ''}" onclick="openNodeModal('${srv.id}')">
+                <div class="card-header">
+                    <span class="card-title"><i class="fa-solid fa-server"></i> ${srv.id}</span>
+                    <span class="status-tag ${isActive ? 'tag-active' : 'tag-inactive'}">
+                        ${isActive ? '🟢 Activo' : '🔴 No Reporta'}
+                    </span>
+                </div>
+                
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 8px;">
+                    Rendimiento: <strong>${srv.iops} IOPS</strong>
+                </div>
+
+                ${disksBarsHtml}
+            </div>
+        `;
+        container.innerHTML += card;
+    });
+}
+
+// --- 4. Modal Individual de Nodo ---
+function openNodeModal(serverId) {
+    const srv = (window.latestServersData || []).find(s => s.id === serverId);
+    if (!srv) return;
+
+    document.getElementById('node-modal-title').innerHTML = `<i class="fa-solid fa-server"></i> Análisis de Nodo: ${srv.id}`;
+    
+    const disks = srv.disks || [];
+    let disksListText = disks.map(d => `<li><strong>${d.name} (${d.type}):</strong> ${d.used} ocupados de ${d.total} (${d.pct}%) - ${d.iops} IOPS</li>`).join('');
+
+    document.getElementById('node-modal-info').innerHTML = `
+        <h4 style="margin-bottom: 8px;">Estado del Nodo: <span style="color: ${srv.status === 'Activo' ? 'var(--accent-green)' : 'var(--accent-red)'}">${srv.status}</span></h4>
+        <p style="margin-bottom: 6px;"><strong>Almacenamiento Consolidado:</strong> ${srv.used} / ${srv.total}</p>
+        <p style="margin-bottom: 6px;"><strong>IOPS Medidos:</strong> ${srv.iops} IOPS</p>
+        <p style="margin-bottom: 12px;"><strong>Respuesta ACK:</strong> ${srv.last_ack || 'Ninguna'}</p>
+        
+        <h4 style="margin-bottom: 6px;">Discos Físicos Conectados (${disks.length}):</h4>
+        <ul style="font-size: 0.85rem; color: var(--text-secondary); padding-left: 18px;">
+            ${disksListText || '<li>Sin información de discos</li>'}
+        </ul>
+        
+        <div style="margin-top: 16px;">
+            <button class="btn btn-sm btn-secondary" onclick="sendDirectCommand('${srv.id}', 'Reinicie servicio')">
+                <i class="fa-solid fa-rotate-right"></i> Reiniciar Servicio
+            </button>
+        </div>
+    `;
+
+    document.getElementById('node-modal').style.display = 'flex';
+
+    // Renderizar gráfico de barras por disco
+    const ctx = document.getElementById('individualChart').getContext('2d');
+    if (individualChartInstance) individualChartInstance.destroy();
+
+    const labels = disks.map(d => `${d.name} (${d.type})`);
+    const usedVals = disks.map(d => parseFloat(d.used) || 0);
+    const freeVals = disks.map(d => parseFloat(d.free) || 0);
+
+    individualChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels.length > 0 ? labels : ['Total Nodo'],
+            datasets: [
+                { label: 'Usado (GB)', data: usedVals.length > 0 ? usedVals : [parseFloat(srv.used) || 0], backgroundColor: '#ef4444' },
+                { label: 'Libre (GB)', data: freeVals.length > 0 ? freeVals : [parseFloat(srv.free) || 0], backgroundColor: '#22c55e' }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { x: { stacked: true }, y: { stacked: true } }
+        }
+    });
+}
+
+function closeNodeModal() {
+    document.getElementById('node-modal').style.display = 'none';
+}
+
+// --- 5. Modal y Operaciones CRUD ---
+async function openCrudModal() {
+    try {
+        const res = await fetch('/api/nodes');
+        const nodes = await res.json();
+        
+        const tbody = document.getElementById('crud-table-body');
+        tbody.innerHTML = '';
+
+        nodes.forEach(n => {
+            tbody.innerHTML += `
+                <tr>
+                    <td><strong>${n.client_id}</strong></td>
+                    <td>${n.status === 'Activo' ? '🟢 Activo' : '🔴 No Reporta'}</td>
+                    <td>
+                        <button class="btn btn-sm btn-danger" onclick="deleteNodeCrud('${n.client_id}')">
+                            <i class="fa-solid fa-trash"></i> Eliminar
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+
+        document.getElementById('crud-modal').style.display = 'flex';
+    } catch (e) {
+        alert("Error al abrir CRUD: " + e);
+    }
+}
+
+function closeCrudModal() {
+    document.getElementById('crud-modal').style.display = 'none';
+}
+
+async function handleAddNode(event) {
+    event.preventDefault();
+    const input = document.getElementById('new-node-id');
+    const val = input.value.strip ? input.value.strip() : input.value.trim();
+    if (!val) return;
+
+    try {
+        const res = await fetch('/api/nodes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: val })
+        });
+        const data = await res.json();
+        if (data.success) {
+            input.value = '';
+            openCrudModal();
+            fetchDashboardData();
+        } else {
+            alert(data.message);
+        }
+    } catch (e) {
+        alert("Error agregando nodo: " + e);
+    }
+}
+
+async function deleteNodeCrud(clientId) {
+    if (!confirm(`¿Estás seguro de eliminar al servidor '${clientId}' del CRUD? Nodos no autorizados serán rechazados por el servidor.`)) return;
+
+    try {
+        const res = await fetch('/api/nodes', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: clientId })
+        });
+        const data = await res.json();
+        if (data.success) {
+            openCrudModal();
+            fetchDashboardData();
+        } else {
+            alert(data.message);
+        }
+    } catch (e) {
+        alert("Error eliminando nodo: " + e);
+    }
+}
+
+// --- 6. Enviar Comandos Directos ---
+async function sendDirectCommand(clientId, action) {
+    try {
+        const res = await fetch('/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: clientId, action: action })
+        });
+        const data = await res.json();
+        alert(data.message);
+    } catch (e) {
+        alert("Error enviando comando: " + e);
+    }
+}
+
+async function sendBroadcastCommand(action) {
+    try {
+        const res = await fetch('/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: action })
+        });
+        const data = await res.json();
+        alert(data.message);
+    } catch (e) {
+        alert("Error enviando comando masivo: " + e);
+    }
+}
+
+// Inicializar
+document.addEventListener('DOMContentLoaded', () => {
+    initCharts();
+    fetchDashboardData();
+    setInterval(fetchDashboardData, 3000);
+});

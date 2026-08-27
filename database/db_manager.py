@@ -5,9 +5,6 @@ from contextlib import contextmanager
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "cluster_monitoring.db")
 
-# Lock global: SQLite serializa escrituras de todas formas; esto evita
-# "database is locked" bajo alta concurrencia con 9 clientes reportando
-# simultáneamente, y hace explícita la sección crítica.
 _write_lock = threading.Lock()
 
 
@@ -15,7 +12,6 @@ def get_connection():
     """Obtiene una conexión SQLite con soporte para dict de filas."""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
-    # WAL permite lecturas concurrentes mientras hay una escritura en curso
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -61,9 +57,17 @@ def init_db():
             free_gb REAL,
             iops INTEGER,
             timestamp TEXT,
+            all_disks_json TEXT,
             FOREIGN KEY (client_id) REFERENCES clients(client_id)
         )
         """)
+
+        # Migración suave para BDs existentes
+        try:
+            cursor.execute("ALTER TABLE metrics ADD COLUMN all_disks_json TEXT;")
+        except Exception:
+            pass
+
 
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS config (
@@ -84,7 +88,6 @@ def init_db():
         )
         """)
 
-        # Índices para las consultas más frecuentes del dashboard
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_client_ts ON metrics(client_id, timestamp)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_client_ack ON messages(client_id, acknowledged)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_command_id ON messages(command_id)")
@@ -92,25 +95,81 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('REPORT_INTERVAL', '30')")
         cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('TIMEOUT', '60')")
 
+        # Sembrado obligatorio de los 9 nodos del cluster de la CNS si la tabla está vacía
+        cursor.execute("SELECT COUNT(*) as count FROM clients;")
+        cnt = cursor.fetchone()["count"]
+        if cnt == 0:
+            regionales = [
+                'REGIONAL_LA_PAZ',
+                'REGIONAL_SANTA_CRUZ',
+                'REGIONAL_COCHABAMBA',
+                'REGIONAL_ORURO',
+                'REGIONAL_POTOSI',
+                'REGIONAL_CHUQUISACA',
+                'REGIONAL_TARIJA',
+                'REGIONAL_BENI',
+                'REGIONAL_PANDO'
+            ]
+            for reg in regionales:
+                cursor.execute(
+                    "INSERT INTO clients (client_id, status, first_connected, last_seen) VALUES (?, 'No Reporta', datetime('now'), datetime('now'))",
+                    (reg,)
+                )
+
     print(f"[DATABASE] Base de datos inicializada en: {os.path.abspath(DB_PATH)}")
 
 
+def is_client_authorized(client_id):
+    """Verifica si un cliente está registrado en el CRUD (tabla clients)."""
+    with _tx() as conn:
+        row = conn.execute("SELECT client_id FROM clients WHERE client_id = ?", (client_id,)).fetchone()
+        return row is not None
+
+
+def add_client_crud(client_id):
+    """Añade un nuevo cliente autorizado desde el CRUD del Dashboard."""
+    with _write_lock, _tx() as conn:
+        conn.execute("""
+            INSERT INTO clients (client_id, status, first_connected, last_seen)
+            VALUES (?, 'No Reporta', datetime('now'), datetime('now'))
+            ON CONFLICT(client_id) DO NOTHING
+        """, (client_id,))
+
+
+def delete_client_crud(client_id):
+    """Elimina un cliente autorizado desde el CRUD del Dashboard."""
+    with _write_lock, _tx() as conn:
+        conn.execute("DELETE FROM metrics WHERE client_id = ?", (client_id,))
+        conn.execute("DELETE FROM messages WHERE client_id = ?", (client_id,))
+        conn.execute("DELETE FROM clients WHERE client_id = ?", (client_id,))
+
+
+def get_all_registered_clients():
+    """Retorna la lista de todos los clientes autorizados en el CRUD."""
+    with _tx() as conn:
+        rows = conn.execute("SELECT client_id, status, first_connected, last_seen FROM clients ORDER BY client_id").fetchall()
+        return [dict(r) for r in rows]
+
+
 def save_metric(client_id, disk_data, timestamp):
-    """Guarda una métrica recibida y actualiza o registra al cliente (operación atómica)."""
+    """Guarda métrica SOLO si el cliente está registrado previamente en el CRUD (Operación Autorizada)."""
+    if not is_client_authorized(client_id):
+        print(f"🛑 [DATABASE] Métrica RECHAZADA. Cliente '{client_id}' no está registrado en el CRUD.")
+        return False
+
+    import json
+    all_disks_json = json.dumps(disk_data.get("all_disks", []))
+
     with _write_lock, _tx() as conn:
         cursor = conn.cursor()
 
         cursor.execute("""
-        INSERT INTO clients (client_id, status, first_connected, last_seen)
-        VALUES (?, 'Activo', ?, ?)
-        ON CONFLICT(client_id) DO UPDATE SET
-            status = 'Activo',
-            last_seen = excluded.last_seen
-        """, (client_id, timestamp, timestamp))
+        UPDATE clients SET status = 'Activo', last_seen = ? WHERE client_id = ?
+        """, (timestamp, client_id))
 
         cursor.execute("""
-        INSERT INTO metrics (client_id, disk_name, disk_type, total_gb, used_gb, free_gb, iops, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO metrics (client_id, disk_name, disk_type, total_gb, used_gb, free_gb, iops, timestamp, all_disks_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             client_id,
             disk_data.get("name"),
@@ -119,8 +178,10 @@ def save_metric(client_id, disk_data, timestamp):
             disk_data.get("used_gb"),
             disk_data.get("free_gb"),
             disk_data.get("iops"),
-            timestamp
+            timestamp,
+            all_disks_json
         ))
+    return True
 
 
 def update_client_status(client_id, status):
@@ -130,16 +191,56 @@ def update_client_status(client_id, status):
 
 
 def get_latest_metrics_all_clients():
-    """Retorna la última métrica reportada por cada cliente."""
+    """Retorna la última métrica reportada por cada cliente registrado."""
+    import json
     with _tx() as conn:
         cursor = conn.execute("""
-        SELECT c.client_id, c.status, c.last_seen, m.disk_name, m.disk_type, m.total_gb, m.used_gb, m.free_gb, m.iops, m.timestamp
+        SELECT c.client_id, c.status, c.last_seen, m.disk_name, m.disk_type, m.total_gb, m.used_gb, m.free_gb, m.iops, m.timestamp, m.all_disks_json
         FROM clients c
         LEFT JOIN metrics m ON m.id = (
             SELECT MAX(id) FROM metrics WHERE client_id = c.client_id
         )
         """)
-        return [dict(row) for row in cursor.fetchall()]
+        rows = [dict(row) for row in cursor.fetchall()]
+        for r in rows:
+            raw = r.get("all_disks_json")
+            if raw:
+                try:
+                    r["all_disks"] = json.loads(raw)
+                except Exception:
+                    r["all_disks"] = []
+            else:
+                r["all_disks"] = []
+        return rows
+
+
+
+def get_iops_history(client_id=None, limit=20):
+    """
+    Obtiene el historial de IOPS guardado en la BD para la gráfica de tiempo.
+    Si client_id es None, retorna el promedio o serie de los clientes activos.
+    """
+    with _tx() as conn:
+        if client_id:
+            rows = conn.execute("""
+                SELECT timestamp, iops, used_gb, free_gb
+                FROM metrics
+                WHERE client_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            """, (client_id, limit)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT timestamp, AVG(iops) as iops, SUM(used_gb) as used_gb, SUM(free_gb) as free_gb
+                FROM metrics
+                GROUP BY timestamp
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+            
+        result = [dict(r) for r in rows]
+        result.reverse()  # Orden cronológico ascendente para gráficos de línea
+        return result
 
 
 def get_config(key):
@@ -147,13 +248,6 @@ def get_config(key):
     with _tx() as conn:
         row = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
         return dict(row)["value"] if row else None
-
-
-def get_all_config():
-    """Obtiene toda la configuración como diccionario {key: value}."""
-    with _tx() as conn:
-        rows = conn.execute("SELECT key, value FROM config").fetchall()
-        return {row["key"]: row["value"] for row in rows}
 
 
 def set_config(key, value):
@@ -166,7 +260,7 @@ def set_config(key, value):
 
 
 def save_message(client_id, command_id, message, sent_at):
-    """Guarda un mensaje enviado a un cliente con su command_id."""
+    """Guarda un mensaje enviado a un cliente."""
     with _write_lock, _tx() as conn:
         cursor = conn.execute(
             "INSERT INTO messages (client_id, command_id, message, sent_at, acknowledged) VALUES (?, ?, ?, ?, 0)",
@@ -176,78 +270,20 @@ def save_message(client_id, command_id, message, sent_at):
 
 
 def mark_message_acknowledged(message_id):
-    """Marca un mensaje como confirmado por el cliente usando su ID numérico."""
+    """Marca un mensaje como confirmado por el cliente."""
     with _write_lock, _tx() as conn:
         conn.execute("UPDATE messages SET acknowledged = 1 WHERE id = ?", (message_id,))
 
 
 def get_message_id_by_command_id(command_id):
-    """Obtiene el id de un mensaje a partir de su command_id (fallback)."""
+    """Obtiene id del mensaje por command_id."""
     with _tx() as conn:
-        row = conn.execute(
-            "SELECT id FROM messages WHERE command_id = ?", (command_id,)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM messages WHERE command_id = ?", (command_id,)).fetchone()
         return row["id"] if row else None
 
 
-def get_pending_messages(client_id):
-    """Obtiene mensajes no confirmados para un cliente."""
-    with _tx() as conn:
-        rows = conn.execute(
-            "SELECT id, message, sent_at FROM messages WHERE client_id = ? AND acknowledged = 0",
-            (client_id,)
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-
-def get_all_pending_messages():
-    """Obtiene todos los mensajes no confirmados."""
-    with _tx() as conn:
-        rows = conn.execute("""
-            SELECT id, client_id, message, sent_at
-            FROM messages
-            WHERE acknowledged = 0
-            ORDER BY sent_at ASC
-        """).fetchall()
-        return [dict(row) for row in rows]
-
-
-def get_cluster_summary():
-    """Calcula KPIs globales del cluster."""
-    with _tx() as conn:
-        row = conn.execute("""
-            SELECT
-                COUNT(DISTINCT c.client_id) as total_nodes,
-                SUM(CASE WHEN c.status = 'Activo' THEN 1 ELSE 0 END) as active_nodes,
-                SUM(m.total_gb) as total_capacity,
-                SUM(m.used_gb) as total_used,
-                SUM(m.free_gb) as total_free
-            FROM clients c
-            LEFT JOIN metrics m ON m.id = (
-                SELECT MAX(id) FROM metrics WHERE client_id = c.client_id
-            )
-        """).fetchone()
-
-    if row:
-        result = dict(row)
-        total = result.get("total_capacity") or 0
-        used = result.get("total_used") or 0
-        result["utilization_percent"] = (used / total * 100) if total > 0 else 0
-        result["total_nodes"] = result.get("total_nodes") or 0
-        result["active_nodes"] = result.get("active_nodes") or 0
-        return result
-    return {
-        "total_nodes": 0,
-        "active_nodes": 0,
-        "total_capacity": 0,
-        "total_used": 0,
-        "total_free": 0,
-        "utilization_percent": 0
-    }
-
-
 def check_inactive_clients(timeout_seconds=60):
-    """Marca como 'No Reporta' a clientes inactivos y retorna sus IDs (útil para logging/alertas)."""
+    """Marca como 'No Reporta' a clientes inactivos."""
     with _write_lock, _tx() as conn:
         cursor = conn.execute("""
             SELECT client_id FROM clients
@@ -266,54 +302,6 @@ def check_inactive_clients(timeout_seconds=60):
         return affected_ids
 
 
-def get_client_history(client_id, limit=10):
-    """Obtiene el historial de métricas de un cliente específico."""
-    with _tx() as conn:
-        rows = conn.execute("""
-            SELECT disk_name, disk_type, total_gb, used_gb, free_gb, iops, timestamp
-            FROM metrics
-            WHERE client_id = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (client_id, limit)).fetchall()
-        return [dict(row) for row in rows]
-
-
-def get_client_details(client_id):
-    """Obtiene la ficha completa de un nodo: estado + última métrica + mensajes pendientes."""
-    with _tx() as conn:
-        client_row = conn.execute(
-            "SELECT * FROM clients WHERE client_id = ?", (client_id,)
-        ).fetchone()
-        if not client_row:
-            return None
-        client = dict(client_row)
-
-        last_metric = conn.execute("""
-            SELECT disk_name, disk_type, total_gb, used_gb, free_gb, iops, timestamp
-            FROM metrics WHERE client_id = ? ORDER BY id DESC LIMIT 1
-        """, (client_id,)).fetchone()
-        client["last_metric"] = dict(last_metric) if last_metric else None
-
-        pending = conn.execute(
-            "SELECT id, message, sent_at FROM messages WHERE client_id = ? AND acknowledged = 0",
-            (client_id,)
-        ).fetchall()
-        client["pending_messages"] = [dict(r) for r in pending]
-
-        return client
-
-
-def delete_old_metrics(days=30):
-    """Elimina métricas más antiguas que 'days' días."""
-    with _write_lock, _tx() as conn:
-        cursor = conn.execute("""
-            DELETE FROM metrics
-            WHERE julianday('now') - julianday(timestamp) > ?
-        """, (days,))
-        return cursor.rowcount
-
-
 if __name__ == "__main__":
     init_db()
-    print("[DATABASE] Inicialización completada.")
+    print("[DATABASE] Inicialización completada con soporte CRUD.")
