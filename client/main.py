@@ -16,17 +16,21 @@ def main():
     parser.add_argument("--interval", type=int, default=5, help="Frecuencia de envío en segundos")
     args = parser.parse_args()
 
-    # Cargar config global si existe
+    # Cargar config global si existe (solo si el usuario no especificó --host por consola)
     config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
     if os.path.exists(config_path):
         try:
             with open(config_path, "r") as f:
                 cfg = json.load(f).get("client", {})
-                args.host = cfg.get("server_host", args.host)
-                args.port = cfg.get("server_port", args.port)
-                args.interval = cfg.get("send_interval_seconds", args.interval)
+                if "--host" not in sys.argv:
+                    args.host = cfg.get("server_host", args.host)
+                if "--port" not in sys.argv:
+                    args.port = cfg.get("server_port", args.port)
+                if "--interval" not in sys.argv:
+                    args.interval = cfg.get("send_interval_seconds", args.interval)
         except Exception:
             pass
+
 
     client = MonitoringClient(
         client_id=args.id,

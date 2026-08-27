@@ -262,12 +262,15 @@ class MonitoringServer:
             now = time.time()
             with self.lock:
                 for cid, info in list(self.clients.items()):
-                    if info["status"] == "Activo":
-                        elapsed = now - info["last_seen"]
-                        if elapsed > self.timeout_seconds:
-                            info["status"] = "No Reporta"
-                            info["socket"] = None
-                            update_client_status(cid, "No Reporta")
+                    if info.get("status") == "Activo":
+                        last_seen = info.get("last_seen")
+                        if last_seen is not None:
+                            elapsed = now - last_seen
+                            if elapsed > self.timeout_seconds:
+                                info["status"] = "No Reporta"
+                                info["socket"] = None
+                                update_client_status(cid, "No Reporta")
+
             
             # También usar la función de la BD para consistencia
             try:

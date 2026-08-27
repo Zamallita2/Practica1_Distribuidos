@@ -63,8 +63,11 @@ def get_dashboard_data():
         if ram_data and ram_data.get("status") == "Activo":
             status = "Activo"
             disk = ram_data.get("metrics", {})
-            last_seen = ram_data.get("last_seen", now)
+            last_seen = ram_data.get("last_seen")
+            if last_seen is None:
+                last_seen = now
             elapsed_sec = round(now - last_seen, 1)
+
             ack_info = ram_data.get("last_ack")
             ack_str = f"[{ack_info['timestamp']}] {ack_info['status']}" if ack_info else None
         else:
