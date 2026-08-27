@@ -7,12 +7,12 @@ import psutil
 import subprocess
 
 def detect_disk_type(device, mountpoint):
-    """Detecta el tipo de disco (SSD/HDD/USB) de forma multiplataforma."""
+    """Detecta el tipo de disco (SSD/HDD/USB/Desconocido) de forma multiplataforma."""
     dev_lower = device.lower()
     mount_lower = mountpoint.lower()
 
     # Detectar si es una unidad extraíble USB por punto de montaje o dispositivo
-    if "/media" in mount_lower or "/run/media" in mount_lower or "usb" in dev_lower:
+    if "/media" in mount_lower or "/run/media" in mount_lower or "usb" in dev_lower or "removable" in dev_lower:
         return "USB"
 
     system = platform.system()
@@ -32,7 +32,6 @@ def detect_disk_type(device, mountpoint):
             pass
     elif system == "Linux":
         try:
-            # Consultar con udevadm o lsblk si es un USB extraíble
             result = subprocess.run(["lsblk", "-ndo", "RM,ROTA", device], capture_output=True, text=True, timeout=3)
             out = result.stdout.strip().split()
             if len(out) >= 1 and out[0] == "1":
@@ -44,10 +43,13 @@ def detect_disk_type(device, mountpoint):
         except Exception:
             pass
 
-    # Fallback inteligente
+    # Fallback si no se detecta la categoría exacta
     if "nvme" in dev_lower or "ssd" in dev_lower:
         return "SSD"
-    return "HDD"
+    if "sd" in dev_lower or "hd" in dev_lower:
+        return "HDD"
+    return "Desconocido"
+
 
 def get_all_disks_metrics():
     """
@@ -116,13 +118,13 @@ def get_all_disks_metrics():
 
 def get_first_disk_metrics():
     """
-    Obtiene las métricas del disco principal e incluye la lista dinámica 'all_disks'
-    para la sincronización en tiempo real de USBs y múltiples unidades.
+    Obtiene las métricas consolidadas (suma total de todos los discos/USBs)
+    e incluye la lista detallada 'all_disks' para sincronización individual.
     """
     all_disks = get_all_disks_metrics()
     if not all_disks:
         return {
-            "name": "/dev/sda1",
+            "name": "Cluster Node",
             "mountpoint": "/",
             "type": "SSD",
             "total_gb": 100.0,
@@ -133,10 +135,24 @@ def get_first_disk_metrics():
             "all_disks": []
         }
 
-    first = all_disks[0].copy()
-    first["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    first["all_disks"] = all_disks
-    return first
+    sum_total = sum(d.get("total_gb", 0.0) for d in all_disks)
+    sum_used = sum(d.get("used_gb", 0.0) for d in all_disks)
+    sum_free = sum(d.get("free_gb", 0.0) for d in all_disks)
+    sum_iops = sum(d.get("iops", 0) for d in all_disks)
+
+    first = all_disks[0]
+    return {
+        "name": first.get("name", "N/A"),
+        "mountpoint": first.get("mountpoint", "/"),
+        "type": first.get("type", "SSD"),
+        "total_gb": round(sum_total, 2),
+        "used_gb": round(sum_used, 2),
+        "free_gb": round(sum_free, 2),
+        "iops": sum_iops,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "all_disks": all_disks
+    }
+
 
 if __name__ == "__main__":
     print("--- Prueba de Escaneo Dinámico de Discos y USBs ---")

@@ -35,11 +35,15 @@
             <div class="refresh-badge">
                 <i class="fa-solid fa-sync fa-spin"></i> Auto-Refresh: 3s
             </div>
+            <button class="btn btn-secondary" onclick="openConfigModal()">
+                <i class="fa-solid fa-gear"></i> Parámetros
+            </button>
             <button class="btn btn-primary" onclick="openCrudModal()">
-                <i class="fa-solid fa-plus-node"></i> Gestión Nodos (CRUD)
+                <i class="fa-solid fa-sliders"></i> Nodos (CRUD)
             </button>
         </div>
     </header>
+
 
     <!-- KPI Summary Grid -->
     <section class="kpi-section">
@@ -161,16 +165,80 @@
 
     <!-- Modal de Análisis Individual por Servidor -->
     <div class="modal" id="node-modal">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-lg" style="max-width: 900px;">
             <div class="modal-header">
                 <h3 id="node-modal-title"><i class="fa-solid fa-server"></i> Análisis de Nodo</h3>
                 <button class="close-btn" onclick="closeNodeModal()">&times;</button>
             </div>
-            <div class="modal-body modal-grid">
-                <div id="node-modal-info" class="node-info"></div>
-                <div class="node-chart-container">
-                    <canvas id="individualChart"></canvas>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 20px;">
+                
+                <!-- Fila Superior: Info Textual y Barra Apilada de Discos por Colores -->
+                <div class="modal-top-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div id="node-modal-info" class="node-info"></div>
+                    <div style="background: #0f172a; padding: 16px; border-radius: 10px; border: 1px solid var(--border-color);">
+                        <h4 style="font-size: 0.9rem; margin-bottom: 8px; color: var(--accent-blue);">
+                            <i class="fa-solid fa-layer-group"></i> Almacenamiento Apilado por Discos
+                        </h4>
+                        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 12px;">
+                            Distribución de espacio usado por cada disco ordenado de mayor a menor uso.
+                        </div>
+                        <div id="stacked-disk-container" style="display: flex; flex-direction: column; gap: 10px;">
+                            <!-- Inyectado dinámicamente -->
+                        </div>
+                    </div>
                 </div>
+
+                <!-- Fila Inferior: Dos Gráficas Separadas (Almacenamiento e IOPS) -->
+                <div class="modal-charts-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div style="background: #0f172a; padding: 14px; border-radius: 10px; border: 1px solid var(--border-color); height: 220px;">
+                        <h5 style="font-size: 0.82rem; margin-bottom: 6px; color: #f97316;">
+                            <i class="fa-solid fa-chart-line"></i> Tendencia de Almacenamiento (GB)
+                        </h5>
+                        <div style="height: 170px;">
+                            <canvas id="nodeStorageChart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div style="background: #0f172a; padding: 14px; border-radius: 10px; border: 1px solid var(--border-color); height: 220px;">
+                        <h5 style="font-size: 0.82rem; margin-bottom: 6px; color: #38bdf8;">
+                            <i class="fa-solid fa-gauge"></i> Media IOPS (por minuto)
+                        </h5>
+                        <div style="height: 170px;">
+                            <canvas id="nodeIopsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Modal de Parámetros Globales del Cluster (Mini Menú de Tiempos) -->
+    <div class="modal" id="config-modal">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-gear"></i> Configuración de Parámetros Globales</h3>
+                <button class="close-btn" onclick="closeConfigModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form onsubmit="handleSaveConfig(event)" class="crud-form" style="flex-direction: column;">
+                    <div style="margin-bottom: 12px;">
+                        <label style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">
+                            Intervalo de envío de métricas de Clientes (segundos):
+                        </label>
+                        <input type="number" id="cfg-report-interval" min="1" max="300" required style="width: 100%;">
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">
+                            Tiempo Límite de Inactividad / Timeout (segundos):
+                        </label>
+                        <input type="number" id="cfg-timeout" min="3" max="600" required style="width: 100%;">
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">
+                        <i class="fa-solid fa-floppy-disk"></i> Guardar y Aplicar a Todos los Nodos
+                    </button>
+                </form>
             </div>
         </div>
     </div>
@@ -178,4 +246,5 @@
     <!-- JS Principal -->
     <script src="{{ url_for('static', filename='js/monitor.js') }}"></script>
 </body>
+
 </html>

@@ -86,10 +86,10 @@ def get_dashboard_data():
 
 
 
-        total_gb = disk.get("total_gb", 0.0)
-        used_gb = disk.get("used_gb", 0.0)
-        free_gb = disk.get("free_gb", 0.0)
-        iops = disk.get("iops", 0)
+        total_gb = float(disk.get("total_gb") or 0.0)
+        used_gb = float(disk.get("used_gb") or 0.0)
+        free_gb = float(disk.get("free_gb") or 0.0)
+        iops = int(disk.get("iops") or 0)
 
         all_disks_raw = disk.get("all_disks", [])
         disks_formatted = []
@@ -101,15 +101,15 @@ def get_dashboard_data():
             sum_iops = 0
 
             for d in all_disks_raw:
-                d_total = d.get("total_gb", 0.0)
-                d_used = d.get("used_gb", 0.0)
-                d_free = d.get("free_gb", 0.0)
+                d_total = float(d.get("total_gb") or 0.0)
+                d_used = float(d.get("used_gb") or 0.0)
+                d_free = float(d.get("free_gb") or 0.0)
                 d_pct = round((d_used / d_total * 100), 1) if d_total > 0 else 0.0
                 
                 sum_total += d_total
                 sum_used += d_used
                 sum_free += d_free
-                sum_iops += d.get("iops", 0)
+                sum_iops += int(d.get("iops") or 0)
 
                 disks_formatted.append({
                     "name": d.get("name", "N/A"),
@@ -118,7 +118,7 @@ def get_dashboard_data():
                     "used": f"{d_used} GB",
                     "free": f"{d_free} GB",
                     "pct": d_pct,
-                    "iops": d.get("iops", 0)
+                    "iops": int(d.get("iops") or 0)
                 })
 
             total_gb = round(sum_total, 2)
@@ -138,6 +138,7 @@ def get_dashboard_data():
             })
 
         pct_overall = round((used_gb / total_gb * 100), 1) if total_gb > 0 else 0.0
+
 
         servers_list.append({
             "id": cid,
@@ -199,6 +200,14 @@ def get_dashboard_data():
     })
 
 
+@app.route('/api/history/<client_id>')
+def get_client_history_api(client_id):
+    """Retorna la serie temporal histórica (IOPS y Espacio Ocupado total) para un nodo específico."""
+    history = get_iops_history(client_id=client_id, limit=20)
+    return jsonify(history)
+
+
+
 
 @app.route('/api/nodes', methods=['GET', 'POST', 'DELETE'])
 def manage_nodes_crud():
@@ -234,6 +243,35 @@ def manage_nodes_crud():
         return jsonify({"success": True, "message": f"Servidor '{cid}' eliminado del CRUD."})
 
 
+@app.route('/api/config', methods=['GET', 'POST'])
+def manage_config_api():
+    """GET/POST de parámetros globales (REPORT_INTERVAL y TIMEOUT)."""
+    srv = get_server_instance()
+    from database.db_manager import get_config, set_config
+
+    if request.method == 'GET':
+        report_interval = get_config("REPORT_INTERVAL") or "5"
+        timeout = srv.timeout_seconds
+        return jsonify({
+            "report_interval": int(report_interval),
+            "timeout_seconds": int(timeout)
+        })
+
+    elif request.method == 'POST':
+        req = request.json or {}
+        new_interval = req.get("report_interval")
+        new_timeout = req.get("timeout_seconds")
+
+        if new_timeout is not None:
+            srv.set_timeout_seconds(int(new_timeout))
+
+        if new_interval is not None and int(new_interval) >= 1:
+            set_config("REPORT_INTERVAL", str(new_interval))
+            srv._broadcast_config_update(int(new_interval))
+
+        return jsonify({"success": True, "message": "Parámetros globales actualizados correctamente."})
+
+
 @app.route('/api/command', methods=['POST'])
 def send_command_api():
     """Endpoint para enviar comandos bidireccionales."""
@@ -252,6 +290,7 @@ def send_command_api():
         ok = sent_count > 0
 
     return jsonify({"success": ok, "message": msg})
+
 
 
 

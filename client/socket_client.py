@@ -93,6 +93,25 @@ class MonitoringClient:
                 print(f"👉 MENSAJE / ACCIÓN SOLICITADA: '{action}'")
                 print("==================================================================\n")
 
+                # Verificar si es comando de reinicio de servicio
+                if action.lower() == "reinicie servicio":
+                    print(f"🔄 [CLIENTE {self.client_id}] Ejecutando reinicio de servicio... Cortando comunicación por 5 segundos...")
+                    log_command(msg)
+                    cmd_id = msg.get("command_id", "unk")
+                    ack = create_ack_response(cmd_id, self.client_id, status="OK", message="Servicio reiniciando en 5s")
+                    ack_str = json.dumps(ack) + "\n"
+                    self.sock.sendall(ack_str.encode('utf-8'))
+                    print(f"✅ [CLIENTE {self.client_id}] ACK enviado. Cerrando socket temporalmente para reinicio...")
+                    
+                    # Cierra socket para forzar reconexión limpia en el bucle principal de connect()
+                    if self.sock:
+                        try:
+                            self.sock.close()
+                        except Exception:
+                            pass
+                        self.sock = None
+                    return
+
                 # Verificar si es una actualización de configuración
                 if action.startswith("Actualización de configuración"):
                     parts = action.split("|")
@@ -112,6 +131,7 @@ class MonitoringClient:
                 ack_str = json.dumps(ack) + "\n"
                 self.sock.sendall(ack_str.encode('utf-8'))
                 print(f"✅ [CLIENTE {self.client_id}] ACK enviado al Servidor Central y guardado en client_commands.log.")
+
 
 
         except Exception as e:

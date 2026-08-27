@@ -70,11 +70,12 @@ async function fetchDashboardData() {
         globalPieChartInstance.data.datasets[0].data = [usedNum, freeNum];
         globalPieChartInstance.update();
 
-        // 3. Actualizar Gráfica de IOPS en el tiempo (desde BD)
+        // 3. Actualizar Gráfica de IOPS en el tiempo (promediado por minuto desde BD)
         if (data.iops_history && data.iops_history.length > 0) {
             const labels = data.iops_history.map(item => {
-                const d = new Date(item.timestamp);
-                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                if (!item.timestamp) return 'Min';
+                const parts = item.timestamp.split(' ');
+                return parts.length > 1 ? parts[1].substring(0, 5) : item.timestamp;
             });
             const values = data.iops_history.map(item => Math.round(item.iops));
 
@@ -87,10 +88,16 @@ async function fetchDashboardData() {
         window.latestServersData = data.servers;
         renderServerCards(data.servers);
 
+        // 5. Si hay un modal individual abierto, refrescarlo activamente en tiempo real
+        if (window.activeModalServerId) {
+            updateNodeModalContent(window.activeModalServerId);
+        }
+
     } catch (err) {
         console.error("Error cargando dashboard:", err);
     }
 }
+
 
 // --- 3. Renderizado de Tarjetas de Servidores ---
 function renderServerCards(servers) {
@@ -154,64 +161,180 @@ function renderServerCards(servers) {
     });
 }
 
-// --- 4. Modal Individual de Nodo ---
-function openNodeModal(serverId) {
+// Variables globales de las dos gráficas separadas del modal
+let nodeStorageChartInstance = null;
+let nodeIopsChartInstance = null;
+
+// Palette de colores vibrantes para la barra apilada por disco
+const DISK_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
+
+// --- 4. Modal Individual de Nodo (Evolución Temporal de Capacidad e IOPS en Tiempo Real) ---
+async function openNodeModal(serverId) {
+    window.activeModalServerId = serverId;
+    document.getElementById('node-modal').style.display = 'flex';
+    await updateNodeModalContent(serverId);
+}
+
+async function updateNodeModalContent(serverId) {
     const srv = (window.latestServersData || []).find(s => s.id === serverId);
     if (!srv) return;
 
     document.getElementById('node-modal-title').innerHTML = `<i class="fa-solid fa-server"></i> Análisis de Nodo: ${srv.id}`;
     
     const disks = srv.disks || [];
-    let disksListText = disks.map(d => `<li><strong>${d.name} (${d.type}):</strong> ${d.used} ocupados de ${d.total} (${d.pct}%) - ${d.iops} IOPS</li>`).join('');
 
+    // 1. Rendimiento textual del nodo
     document.getElementById('node-modal-info').innerHTML = `
         <h4 style="margin-bottom: 8px;">Estado del Nodo: <span style="color: ${srv.status === 'Activo' ? 'var(--accent-green)' : 'var(--accent-red)'}">${srv.status}</span></h4>
-        <p style="margin-bottom: 6px;"><strong>Almacenamiento Consolidado:</strong> ${srv.used} / ${srv.total}</p>
-        <p style="margin-bottom: 6px;"><strong>IOPS Medidos:</strong> ${srv.iops} IOPS</p>
-        <p style="margin-bottom: 12px;"><strong>Respuesta ACK:</strong> ${srv.last_ack || 'Ninguna'}</p>
+        <p style="margin-bottom: 6px;"><strong>Capacidad Consolidada:</strong> ${srv.used} / ${srv.total}</p>
+        <p style="margin-bottom: 6px;"><strong>Rendimiento Actual:</strong> ${srv.iops} IOPS</p>
+        <p style="margin-bottom: 12px;"><strong>Confirmación ACK:</strong> ${srv.last_ack || 'Ninguna'}</p>
         
-        <h4 style="margin-bottom: 6px;">Discos Físicos Conectados (${disks.length}):</h4>
+        <h4 style="margin-bottom: 6px;">Unidades de Almacenamiento (${disks.length}):</h4>
         <ul style="font-size: 0.85rem; color: var(--text-secondary); padding-left: 18px;">
-            ${disksListText || '<li>Sin información de discos</li>'}
+            ${disks.map(d => `<li><strong>${d.name} (${d.type}):</strong> ${d.used} / ${d.total} (${d.pct}%) - ${d.iops} IOPS</li>`).join('') || '<li>Sin información de discos</li>'}
         </ul>
         
-        <div style="margin-top: 16px;">
+        <div style="margin-top: 14px;">
             <button class="btn btn-sm btn-secondary" onclick="sendDirectCommand('${srv.id}', 'Reinicie servicio')">
                 <i class="fa-solid fa-rotate-right"></i> Reiniciar Servicio
             </button>
         </div>
     `;
 
-    document.getElementById('node-modal').style.display = 'flex';
-
-    // Renderizar gráfico de barras por disco
-    const ctx = document.getElementById('individualChart').getContext('2d');
-    if (individualChartInstance) individualChartInstance.destroy();
-
-    const labels = disks.map(d => `${d.name} (${d.type})`);
-    const usedVals = disks.map(d => parseFloat(d.used) || 0);
-    const freeVals = disks.map(d => parseFloat(d.free) || 0);
-
-    individualChartInstance = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels.length > 0 ? labels : ['Total Nodo'],
-            datasets: [
-                { label: 'Usado (GB)', data: usedVals.length > 0 ? usedVals : [parseFloat(srv.used) || 0], backgroundColor: '#ef4444' },
-                { label: 'Libre (GB)', data: freeVals.length > 0 ? freeVals : [parseFloat(srv.free) || 0], backgroundColor: '#22c55e' }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: { x: { stacked: true }, y: { stacked: true } }
-        }
+    // 2. Construir la Barra Apilada por Colores (Discos ordenados de mayor a menor uso)
+    const sortedDisks = [...disks].sort((a, b) => {
+        const uA = parseFloat(a.used) || 0;
+        const uB = parseFloat(b.used) || 0;
+        return uB - uA; // Orden descendente por espacio usado
     });
+
+    const totalClusterGB = parseFloat(srv.total) || 1.0;
+    const stackedContainer = document.getElementById('stacked-disk-container');
+
+    let segmentsHtml = '';
+    let legendHtml = '';
+
+    sortedDisks.forEach((d, idx) => {
+        const usedVal = parseFloat(d.used) || 0;
+        const widthPct = Math.min(100, Math.max(2, (usedVal / totalClusterGB) * 100));
+        const color = DISK_COLORS[idx % DISK_COLORS.length];
+
+        segmentsHtml += `
+            <div style="width: ${widthPct}%; background-color: ${color}; height: 100%; transition: width 0.3s;" 
+                 title="${d.name} (${d.type}): ${d.used} ocupados"></div>
+        `;
+
+        legendHtml += `
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: #cbd5e1;">
+                <span style="width: 10px; height: 10px; background-color: ${color}; border-radius: 2px; display: inline-block;"></span>
+                <span><strong>${d.name}</strong> (${d.type}): ${d.used}</span>
+            </div>
+        `;
+    });
+
+    stackedContainer.innerHTML = `
+        <div style="background: #1e293b; border-radius: 6px; height: 22px; display: flex; overflow: hidden; width: 100%; border: 1px solid var(--border-color);">
+            ${segmentsHtml || '<div style="width: 100%; background: #334155;"></div>'}
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px;">
+            ${legendHtml || '<span style="font-size:0.75rem; color:#64748b;">No hay discos activos</span>'}
+        </div>
+    `;
+
+    // 3. Obtener historial del cliente desde la API /api/history/<client_id>
+    try {
+        const res = await fetch(`/api/history/${serverId}`);
+        const historyData = await res.json();
+
+        let labels = [];
+        let usedSeries = [];
+        let iopsSeries = [];
+
+        if (historyData && historyData.length > 0) {
+            labels = historyData.map(h => {
+                if (!h.timestamp) return 'Min';
+                const parts = h.timestamp.split(' ');
+                return parts.length > 1 ? parts[1].substring(0, 5) : h.timestamp;
+            });
+            usedSeries = historyData.map(h => h.used_gb);
+            iopsSeries = historyData.map(h => h.iops);
+        } else {
+            labels = ['Actual'];
+            usedSeries = [parseFloat(srv.used) || 0];
+            iopsSeries = [srv.iops || 0];
+        }
+
+        // Gráfica 1: Tendencia de Almacenamiento (GB)
+        const ctxStorage = document.getElementById('nodeStorageChart').getContext('2d');
+        if (nodeStorageChartInstance) nodeStorageChartInstance.destroy();
+
+        nodeStorageChartInstance = new Chart(ctxStorage, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Capacidad Usada Total (GB)',
+                    data: usedSeries,
+                    borderColor: '#f97316',
+                    backgroundColor: 'rgba(249, 115, 22, 0.15)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#94a3b8', font: { size: 9 } } },
+                    y: { ticks: { color: '#f97316', font: { size: 9 } } }
+                }
+            }
+        });
+
+        // Gráfica 2: Rendimiento Media IOPS (por minuto)
+        const ctxIops = document.getElementById('nodeIopsChart').getContext('2d');
+        if (nodeIopsChartInstance) nodeIopsChartInstance.destroy();
+
+        nodeIopsChartInstance = new Chart(ctxIops, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Media IOPS (por minuto)',
+                    data: iopsSeries,
+                    borderColor: '#38bdf8',
+                    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#94a3b8', font: { size: 9 } } },
+                    y: { ticks: { color: '#38bdf8', font: { size: 9 } } }
+                }
+            }
+        });
+
+    } catch (err) {
+        console.error("Error cargando historial de cliente:", err);
+    }
 }
 
 function closeNodeModal() {
+    window.activeModalServerId = null;
     document.getElementById('node-modal').style.display = 'none';
 }
+
+
+
 
 // --- 5. Modal y Operaciones CRUD ---
 async function openCrudModal() {
@@ -318,6 +441,47 @@ async function sendBroadcastCommand(action) {
         alert(data.message);
     } catch (e) {
         alert("Error enviando comando masivo: " + e);
+    }
+}
+
+// --- 7. Modal y Gestión de Parámetros Globales ---
+async function openConfigModal() {
+    try {
+        const res = await fetch('/api/config');
+        const cfg = await res.json();
+
+        document.getElementById('cfg-report-interval').value = cfg.report_interval || 5;
+        document.getElementById('cfg-timeout').value = cfg.timeout_seconds || 60;
+        document.getElementById('config-modal').style.display = 'flex';
+    } catch (e) {
+        alert("Error cargando configuración: " + e);
+    }
+}
+
+function closeConfigModal() {
+    document.getElementById('config-modal').style.display = 'none';
+}
+
+async function handleSaveConfig(event) {
+    event.preventDefault();
+    const intervalVal = parseInt(document.getElementById('cfg-report-interval').value);
+    const timeoutVal = parseInt(document.getElementById('cfg-timeout').value);
+
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                report_interval: intervalVal,
+                timeout_seconds: timeoutVal
+            })
+        });
+        const data = await res.json();
+        alert(data.message);
+        closeConfigModal();
+        fetchDashboardData();
+    } catch (e) {
+        alert("Error guardando configuración: " + e);
     }
 }
 

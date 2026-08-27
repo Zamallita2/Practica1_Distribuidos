@@ -217,30 +217,46 @@ def get_latest_metrics_all_clients():
 
 def get_iops_history(client_id=None, limit=20):
     """
-    Obtiene el historial de IOPS guardado en la BD para la gráfica de tiempo.
-    Si client_id es None, retorna el promedio o serie de los clientes activos.
+    Obtiene el historial de métricas agrupado por minuto (%Y-%m-%dT%H:%M:00Z) para gráficos de tiempo:
+    - AVG(iops) para la media de IOPS por minuto.
+    - MAX(used_gb) y MAX(free_gb) o SUM según aplique por minuto.
     """
     with _tx() as conn:
         if client_id:
             rows = conn.execute("""
-                SELECT timestamp, iops, used_gb, free_gb
+                SELECT 
+                    strftime('%Y-%m-%d %H:%M:00', timestamp) as time_min,
+                    ROUND(AVG(iops), 1) as iops,
+                    ROUND(MAX(used_gb), 2) as used_gb,
+                    ROUND(MAX(free_gb), 2) as free_gb
                 FROM metrics
                 WHERE client_id = ?
-                ORDER BY id DESC
+                GROUP BY time_min
+                ORDER BY time_min DESC
                 LIMIT ?
             """, (client_id, limit)).fetchall()
         else:
             rows = conn.execute("""
-                SELECT timestamp, AVG(iops) as iops, SUM(used_gb) as used_gb, SUM(free_gb) as free_gb
+                SELECT 
+                    strftime('%Y-%m-%d %H:%M:00', timestamp) as time_min,
+                    ROUND(AVG(iops), 1) as iops,
+                    ROUND(SUM(used_gb), 2) as used_gb,
+                    ROUND(SUM(free_gb), 2) as free_gb
                 FROM metrics
-                GROUP BY timestamp
-                ORDER BY timestamp DESC
+                GROUP BY time_min
+                ORDER BY time_min DESC
                 LIMIT ?
             """, (limit,)).fetchall()
             
-        result = [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["timestamp"] = d.get("time_min") or ""
+            result.append(d)
+            
         result.reverse()  # Orden cronológico ascendente para gráficos de línea
         return result
+
 
 
 def get_config(key):
