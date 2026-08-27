@@ -47,6 +47,22 @@
     </div>
 
     <!-- Script de Lógica del Dashboard -->
+    <script>
+        // Flask inyectará el valor de refresh_rate aquí desde el config.json
+        const CONFIG_REFRESH_RATE = parseInt("{{ refresh_rate }}");
+    </script>
     <script src="{{ url_for('static', filename='js/monitor.js') }}"></script>
+    <!-- Dashboard Individual Oculto -->
+    <div class="modal-overlay" id="server-modal">
+    <div class="modal-content">
+        <div id="modal-metrics">
+            <!-- Las analíticas inyectadas irán aquí -->
+        </div>
+        <div class="modal-charts">
+            <canvas id="individualChart"></canvas>
+            <button onclick="document.getElementById('server-modal').style.display='none'" style="margin-top: 15px; padding: 8px 16px; background: var(--accent-red); border: none; color: white; border-radius: 6px; cursor: pointer;">Cerrar Panel</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>

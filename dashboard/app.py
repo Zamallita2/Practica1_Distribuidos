@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import json
 from flask import Flask, render_template, jsonify, request
 
 # Importar Servidor Central y Métricas RAM
@@ -15,7 +16,18 @@ server = get_server_instance()
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    # Leer la frecuencia de actualización desde el config.json
+    try:
+        with open('../config.json', 'r') as f:
+            config = json.load(f)
+            # Extraer los segundos y convertirlos a milisegundos para JS
+            refresh_rate = config['dashboard']['refresh_interval_seconds'] * 1000
+    except Exception as e:
+        print(f"Error leyendo config.json: {e}")
+        refresh_rate = 3000 # Valor por defecto si falla
+        
+    # Pasar la variable refresh_rate a la plantilla HTML
+    return render_template('index.html', refresh_rate=refresh_rate)
 
 @app.route('/api/dashboard')
 def get_dashboard_data():

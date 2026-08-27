@@ -97,11 +97,48 @@ async function fetchDashboardData() {
         console.error("Error obteniendo métricas del cluster:", err);
     }
 }
+function updateGlobalPieChart(usedPct) {
+    if (window.globalPieChart) {
+        window.globalPieChart.data.datasets[0].data = [usedPct, 100 - usedPct];
+        window.globalPieChart.update();
+    }
+}
+
+// Añadido: Inyección de analíticas y renderizado del dashboard individual
+let individualChartInstance = null;
+
+function openServerDashboard(serverData) {
+    document.getElementById('server-modal').style.display = 'flex';
+    
+    // Desplegar datos analíticos precisos del servidor
+    document.getElementById('modal-metrics').innerHTML = `
+        <h2 style="color: #38bdf8; margin-bottom: 12px;">Servidor: ${serverData.client_id || serverData.id}</h2>
+        <p style="margin-bottom: 8px;"><strong>Capacidad Total:</strong> ${serverData.total_gb || 0} GB</p>
+        <p style="margin-bottom: 8px;"><strong>Espacio Libre:</strong> ${serverData.free_gb || 0} GB</p>
+        <p style="margin-bottom: 8px;"><strong>IOPS Registrados:</strong> ${serverData.iops || 'N/A'}</p>
+        <p style="margin-bottom: 8px;"><strong>Tipo de Disco:</strong> ${serverData.disk_type || 'Desconocido'}</p>
+    `;
+
+    // Renderizar gráfico de uso individual
+    const ctx = document.getElementById('individualChart').getContext('2d');
+    if (individualChartInstance) individualChartInstance.destroy();
+    
+    individualChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['Ocupado (GB)', 'Libre (GB)'],
+            datasets: [{
+                label: 'Distribución de Almacenamiento',
+                data: [serverData.used_gb || 0, serverData.free_gb || 0],
+                backgroundColor: ['#ef4444', '#22c55e']
+            }]
+        }
+    });
+}
 
 // 6. Configuración del Auto-Refresh
 // Esto permite consultar al servidor cada 3 segundos (3000 ms)
-const refreshRate = 3000;
-setInterval(fetchDashboardData, refreshRate);
+setInterval(fetchDashboardData, CONFIG_REFRESH_RATE);
 
 // Ejecutar la primera carga inmediatamente al abrir
 fetchDashboardData();
